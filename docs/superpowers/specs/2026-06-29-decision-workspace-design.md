@@ -509,3 +509,207 @@ The product surface, however, should not lead with platform language. It should 
 
 The long-term platform story is preserved by the architecture.
 The short-term market story is won by a concrete product: **Decision Workspace**.
+
+## 16. Decision history and scope convergence
+
+This section records the major product decisions made during the design process so the team can preserve the reasoning behind the current direction.
+
+### 16.1 Initial starting point
+
+The project started from the idea of building a **general agentic SDK** on top of OpenAI-compatible APIs and related tooling, with a small core and high composability.
+
+The original ambition was broad:
+
+- generic agent runtime
+- strong composition model
+- support for many agentic workflows
+- room to grow into a larger product
+
+### 16.2 First key realization: platform truth is not market truth
+
+Although the underlying system should remain a generic agentic platform, that is not a viable first user-facing story.
+
+The design process converged on a core principle:
+
+> Build generic, package specific, market concrete.
+
+This resolved the tension between a broad platform ambition and the need for a sharp first product.
+
+### 16.3 Rejected path: developer-first SDK positioning
+
+The team explicitly moved away from a developer-first SDK story.
+
+Reason:
+
+- the desired end user is not primarily a software developer
+- the product should solve user-facing decision workflows rather than code-shaped work
+- generic "agent platform" messaging is too abstract for first-market adoption
+
+### 16.4 Rejected path: consultant tooling as the primary market story
+
+The design briefly explored a consultant-facing product: a system that helps consultants prepare research packs and client deliverables.
+
+This direction was rejected as the primary market story because it mismatched the deeper ambition.
+
+Reason:
+
+- if the product eventually performs most of the analysis and structuring work, the consultant becomes only the reviewer or signer
+- that makes consultants a weak long-term primary customer unless the product is explicitly white-labeled for them
+- the stronger long-term opportunity is to give end users direct access to consulting-grade outputs
+
+### 16.5 Final strategic direction
+
+The final direction is:
+
+- **platform truth**: a general agentic runtime
+- **product truth**: a user-facing Decision Workspace
+- **market truth**: a product that helps users complete complex choices and path planning
+
+### 16.6 Final recipe family direction
+
+What first looked like separate opportunities ultimately collapsed into one shared decision archetype:
+
+- learning path planning
+- shopping comparison
+- career path planning
+
+All three are treated as variants of the same underlying pattern:
+
+1. define the desired outcome
+2. clarify constraints
+3. gather relevant options and evidence
+4. compare trade-offs
+5. recommend a path
+6. produce a reusable result package
+
+### 16.7 Final first-market choice
+
+The first hero scenario is **learning path planning**.
+
+Reason:
+
+- it is emotionally legible
+- it has clear personalization requirements
+- it benefits from comparison and planning
+- it naturally extends into long-lived workspace behavior
+- it avoids the highest-regulation advisory categories in v1
+
+## 17. Expansion roadmap
+
+This roadmap describes how the product can expand without losing the original architectural discipline.
+
+### 17.1 Phase 1: prove the Decision Workspace wedge
+
+Goal:
+
+- ship the smallest coherent product that proves the runtime and the product story together
+
+Primary focus:
+
+- learning path planning as the hero recipe
+- hybrid provider model
+- structured result packages
+- human-in-the-loop checkpoints
+- reusable workspace history
+
+Success signal:
+
+- users can repeatedly use the system for a real learning decision and trust the output enough to act on it
+
+### 17.2 Phase 2: expand the recipe family
+
+Goal:
+
+- prove that the runtime can support multiple decision-shaped workflows without architectural change
+
+Add:
+
+- shopping comparison
+- career path planning
+- more recipe-specific intake schemas
+- recipe-specific output templates
+
+Success signal:
+
+- one shared runtime powers several visibly different decision experiences
+
+### 17.3 Phase 3: grow from one-shot runs into an ongoing workspace
+
+Goal:
+
+- make the product useful across time, not only within a single run
+
+Add:
+
+- recurring check-ins
+- scheduled reviews
+- evolving constraints and preferences
+- persistent progress tracking
+- revision of past result packages
+
+Success signal:
+
+- users return to the same workspace to refine and continue important decisions
+
+### 17.4 Phase 4: deepen trust and personalization
+
+Goal:
+
+- make recommendations feel more personally fitted and more dependable
+
+Add:
+
+- stronger preference memory
+- better evidence ranking
+- richer confidence signaling
+- more explicit rationale presentation
+- improved partial completion and recovery behavior
+
+Success signal:
+
+- users feel the system understands their constraints, not just the generic problem space
+
+### 17.5 Phase 5: broaden into a true platform surface
+
+Goal:
+
+- expose the underlying generality of the system once the product abstractions are battle-tested
+
+Add:
+
+- public SDK or API surface
+- recipe authoring layer
+- provider plugin ecosystem
+- external integration model
+- optional developer-facing runtime surfaces
+
+Success signal:
+
+- external builders can extend the system without breaking the original product clarity
+
+### 17.6 Phase 6: selective domain expansion
+
+Goal:
+
+- expand into adjacent high-value decision categories while preserving trust
+
+Potential directions:
+
+- relocation planning
+- education path comparison
+- high-consideration purchases
+- long-horizon personal planning
+
+Constraint:
+
+- regulated domains such as legal, medical, and investment advice should remain out of scope until trust, reliability, and risk controls are significantly stronger
+
+## 18. Working rule for future decisions
+
+When future design choices create tension between breadth and clarity, use this rule:
+
+1. preserve the generic runtime underneath
+2. keep the visible product concrete and understandable
+3. only broaden the market story after one sharp wedge is already working
+
+This rule keeps the project aligned with both its long-term platform ambition and its short-term product reality.
