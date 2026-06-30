@@ -23,6 +23,7 @@ export function WorkbenchComposer({
 }: WorkbenchComposerProps) {
   return (
     <form
+      data-testid="workbench-composer"
       className="border-t border-white/10 bg-slate-950/80 px-5 py-4 backdrop-blur sm:px-6"
       onSubmit={onSubmit}
     >
