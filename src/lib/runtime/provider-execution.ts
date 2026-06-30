@@ -2,7 +2,7 @@ import { resolveProviderConfig } from '@/lib/providers/registry';
 import { buildRecipeResult } from '@/lib/recipes/registry';
 import { buildResultPackage } from '@/lib/runtime/result-package';
 import { listProviderSettings } from '@/lib/workspace-store';
-import type { Citation, ResultPackage } from './types';
+import type { Citation, ResultPackage, RunActivity } from './types';
 
 interface ExecuteRecipeInput {
   workspaceId: string;
@@ -17,6 +17,19 @@ export interface ProviderExecutionResult {
   resultPackage: ResultPackage;
   checkpoints: string[];
   providerUsed: string;
+  modelUsed: string;
+  mode: 'provider' | 'fallback';
+  activities: RunActivity[];
+}
+
+function buildActivity(
+  id: string,
+  title: string,
+  detail: string,
+  kind: RunActivity['kind'],
+  status: RunActivity['status'] = 'completed',
+): RunActivity {
+  return { id, title, detail, kind, status };
 }
 
 function getProviderNameFromSettings(workspaceId: string): string | undefined {
@@ -142,6 +155,13 @@ export async function executeRecipeWithProvider(input: ExecuteRecipeInput): Prom
       resultPackage: fallbackResultPackage,
       checkpoints: ['Intake captured', 'Fallback recipe used'],
       providerUsed: 'fallback',
+      modelUsed: 'fallback-recipe',
+      mode: 'fallback',
+      activities: [
+        buildActivity('intake', 'Intake captured', 'The request was accepted for execution.', 'intake'),
+        buildActivity('playwright', 'Playwright test mode', 'End-to-end tests use a deterministic local fallback instead of a live provider.', 'warning', 'warning'),
+        buildActivity('fallback', 'Fallback recipe used', 'The local recipe generated the result package.', 'reasoning'),
+      ],
     };
   }
 
@@ -154,6 +174,13 @@ export async function executeRecipeWithProvider(input: ExecuteRecipeInput): Prom
       resultPackage: fallbackResultPackage,
       checkpoints: ['Intake captured', 'Fallback recipe used'],
       providerUsed: 'fallback',
+      modelUsed: 'fallback-recipe',
+      mode: 'fallback',
+      activities: [
+        buildActivity('intake', 'Intake captured', 'The request was accepted for execution.', 'intake'),
+        buildActivity('provider-missing', 'Provider unavailable', 'No configured model credentials were available, so the local recipe was used.', 'warning', 'warning'),
+        buildActivity('fallback', 'Fallback recipe used', 'The local recipe generated the result package.', 'reasoning'),
+      ],
     };
   }
 
@@ -167,11 +194,19 @@ export async function executeRecipeWithProvider(input: ExecuteRecipeInput): Prom
       resultPackage: fallbackResultPackage,
       checkpoints: ['Intake captured', 'Fallback recipe used'],
       providerUsed: 'fallback',
+      modelUsed: 'fallback-recipe',
+      mode: 'fallback',
+      activities: [
+        buildActivity('intake', 'Intake captured', 'The request was accepted for execution.', 'intake'),
+        buildActivity('provider-missing-key', 'Provider unavailable', 'The configured provider had no usable API key, so the local recipe was used.', 'warning', 'warning'),
+        buildActivity('fallback', 'Fallback recipe used', 'The local recipe generated the result package.', 'reasoning'),
+      ],
     };
   }
 
   try {
     const endpoint = buildCompletionEndpoint(providerConfig.baseUrl ?? 'https://api.deepseek.com');
+    const modelUsed = getModelForProvider(providerName);
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -180,7 +215,7 @@ export async function executeRecipeWithProvider(input: ExecuteRecipeInput): Prom
         Authorization: `Bearer ${providerConfig.apiKey}`,
       },
       body: JSON.stringify({
-        model: getModelForProvider(providerName),
+        model: modelUsed,
         messages: [
           {
             role: 'system',
@@ -215,12 +250,27 @@ export async function executeRecipeWithProvider(input: ExecuteRecipeInput): Prom
       resultPackage: normalizeStructuredPayload(structuredPayload, fallbackResultPackage),
       checkpoints: ['Intake captured', 'Provider response received'],
       providerUsed: providerName,
+      modelUsed,
+      mode: 'provider',
+      activities: [
+        buildActivity('intake', 'Intake captured', 'The request was accepted for execution.', 'intake'),
+        buildActivity('provider', 'Model selected', `${modelUsed} was selected through ${providerName}.`, 'provider'),
+        buildActivity('response', 'Provider response received', `${providerName} returned a structured response for the current run.`, 'provider'),
+        buildActivity('package', 'Result package created', 'The provider response was normalized into the workspace result package.', 'reasoning'),
+      ],
     };
   } catch {
     return {
       resultPackage: fallbackResultPackage,
       checkpoints: ['Intake captured', 'Fallback recipe used'],
       providerUsed: 'fallback',
+      modelUsed: 'fallback-recipe',
+      mode: 'fallback',
+      activities: [
+        buildActivity('intake', 'Intake captured', 'The request was accepted for execution.', 'intake'),
+        buildActivity('provider-failed', 'Provider request failed', 'The live provider call failed, so the local recipe was used instead.', 'warning', 'warning'),
+        buildActivity('fallback', 'Fallback recipe used', 'The local recipe generated the result package.', 'reasoning'),
+      ],
     };
   }
 }
