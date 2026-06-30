@@ -32,3 +32,15 @@
 - All required Task 2 adapter files now exist.
 - Focused Task 2 tests pass.
 - No broad typecheck or unrelated app-wide validation was run.
+
+## Task 2 finding fix
+- Hardened `src/lib/tools/files/local-file-writer.ts` so disk writes resolve against the artifact root and reject paths that escape it.
+- Added focused coverage in `tests/unit/tools/local-file-writer.test.ts` for a normal write and a traversal attempt that must fail.
+
+## Verification
+- Command:
+  - `npm run test:unit -- --run tests/unit/tools/local-file-writer.test.ts`
+- Result:
+  - PASS
+  - `Test Files  1 passed (1)`
+  - `Tests  2 passed (2)`

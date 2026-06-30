@@ -11,7 +11,14 @@ export interface LocalFileWriterDependencies {
 }
 
 async function writeArtifactToDisk(baseDirectory: string, key: string, content: string): Promise<void> {
-  const outputPath = path.join(baseDirectory, key);
+  const rootDirectory = path.resolve(baseDirectory);
+  const outputPath = path.resolve(rootDirectory, key);
+  const relativePath = path.relative(rootDirectory, outputPath);
+
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    throw new Error(`Refusing to write artifact outside the artifact root: ${key}`);
+  }
+
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, content, 'utf8');
 }
