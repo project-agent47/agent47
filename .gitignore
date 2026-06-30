@@ -1,0 +1,9 @@
+.env
+.next/
+.storage/
+.superpowers/
+.agents/
+node_modules/
+test-results/
+plan.md
+skills-lock.json
