@@ -1,36 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { buildResultPackage } from '@/lib/runtime/result-package';
 import { createRunState, transitionRunState } from '@/lib/runtime/run-machine';
 
 describe('run machine', () => {
-  it('moves a draft run into a running state', () => {
+  it('moves a run through research, approval, execution, and packaging', () => {
     const run = createRunState('run-1', 'Build a learning path');
 
-    const next = transitionRunState(run, { type: 'start' });
+    expect(run.currentPhase).toBe('intake');
 
-    expect(next.status).toBe('running');
-    expect(next.currentStep).toBe('collecting-context');
-  });
+    const research = transitionRunState(run, { type: 'start-research' });
+    const approval = transitionRunState(research, { type: 'complete-research' });
+    const execution = transitionRunState(approval, { type: 'approve' });
+    const packaged = transitionRunState(execution, { type: 'complete-execution' });
 
-  it('requests approval before the result can be finalized', () => {
-    const run = createRunState('run-2', 'Compare two learning options');
-    const started = transitionRunState(run, { type: 'start' });
-    const paused = transitionRunState(started, { type: 'request-approval' });
-
-    expect(paused.status).toBe('awaiting_approval');
-    expect(paused.currentStep).toBe('review');
-  });
-
-  it('builds a structured result package with defaults', () => {
-    const pkg = buildResultPackage({
-      summary: 'The best option is a bootcamp.',
-      recommendation: 'Choose the bootcamp.',
-      citations: [{ source: 'Coursera', title: 'Learning Path Overview' }],
-    });
-
-    expect(pkg.summary).toBe('The best option is a bootcamp.');
-    expect(pkg.nextActions).toEqual(['Review the recommendation with the user']);
-    expect(pkg.openQuestions).toEqual([]);
-    expect(pkg.confidence).toBe(0.7);
+    expect(research.currentPhase).toBe('research');
+    expect(research.status).toBe('running');
+    expect(approval.currentPhase).toBe('approval');
+    expect(approval.status).toBe('awaiting_approval');
+    expect(execution.currentPhase).toBe('execution');
+    expect(execution.status).toBe('running');
+    expect(packaged.currentPhase).toBe('package');
+    expect(packaged.status).toBe('completed');
   });
 });

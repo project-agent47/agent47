@@ -1,7 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { ResultPackage } from '@/lib/runtime/types';
+import type {
+  ApprovalState,
+  ArtifactBundle,
+  Citation,
+  ResearchDossier,
+  ResultPackage,
+  RunActivity,
+  RunExecutionMetadata,
+  RunPhase,
+  RunStatus,
+  RunArtifact,
+} from '@/lib/runtime/types';
 
 export interface WorkspaceRecord {
   id: string;
@@ -16,13 +27,19 @@ export interface WorkspaceRunRecord {
   workspaceId: string;
   title: string;
   recipe: string;
-  status: 'draft' | 'running' | 'awaiting_approval' | 'completed' | 'failed';
+  status: RunStatus;
   currentStep: string;
-  artifacts: Array<{ id: string; name: string; content: string; kind: 'markdown' | 'json' | 'text' }>;
-  citations: Array<{ source: string; title: string; url?: string }>;
+  phase?: RunPhase;
+  dossier?: ResearchDossier | null;
+  approval?: ApprovalState | null;
+  artifactBundle?: ArtifactBundle | null;
+  artifacts: RunArtifact[];
+  citations: Citation[];
   resultPackage: ResultPackage;
   checkpoints: string[];
   sources: string[];
+  execution: RunExecutionMetadata;
+  activities: RunActivity[];
   createdAt: string;
   updatedAt: string;
 }
@@ -52,9 +69,9 @@ function createDefaultStore(): DecisionWorkspaceStore {
   return {
     workspaces: [
       {
-        id: 'workspace-demo',
-        name: 'Demo Workspace',
-        slug: 'demo-workspace',
+        id: 'workspace-primary',
+        name: 'Workspace',
+        slug: 'workspace',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -75,12 +92,166 @@ function getStoreFilePath(): string {
   return join(rootDir, fileName);
 }
 
+function isLegacyDemoWorkspace(workspace: WorkspaceRecord): boolean {
+  return (
+    workspace.id === 'workspace-demo' ||
+    workspace.name === 'Demo Workspace' ||
+    workspace.slug === 'demo-workspace'
+  );
+}
+
+function normalizeActivities(run: Partial<WorkspaceRunRecord>): RunActivity[] {
+  if (Array.isArray(run.activities) && run.activities.length > 0) {
+    return run.activities;
+  }
+
+  return (run.checkpoints ?? []).map((checkpoint, index) => ({
+    id: `${run.id ?? 'run'}-activity-${index + 1}`,
+    title: checkpoint,
+    detail: checkpoint,
+    kind: checkpoint.toLowerCase().includes('fallback')
+      ? 'warning'
+      : checkpoint.toLowerCase().includes('provider')
+        ? 'provider'
+        : 'intake',
+    status: checkpoint.toLowerCase().includes('fallback') ? 'warning' : 'completed',
+  }));
+}
+
+function normalizeRunPhase(run: Partial<WorkspaceRunRecord>): RunPhase {
+  if (run.phase) {
+    return run.phase;
+  }
+
+  const status = run.status;
+  const currentStep = (run.currentStep ?? '').toLowerCase();
+
+  if (status === 'failed' || currentStep === 'failed') {
+    return 'failed';
+  }
+
+  if (currentStep.includes('packag') || currentStep === 'done' || status === 'completed') {
+    return 'package';
+  }
+
+  if (currentStep.includes('review') || currentStep.includes('approval') || status === 'awaiting_approval') {
+    return 'approval';
+  }
+
+  if (currentStep.includes('execut')) {
+    return 'execution';
+  }
+
+  if (currentStep.includes('research') || currentStep.includes('context')) {
+    return 'research';
+  }
+
+  if (currentStep.includes('draft') || currentStep.includes('revis')) {
+    return 'intake';
+  }
+
+  if (status === 'running') {
+    return 'research';
+  }
+
+  return 'intake';
+}
+
+function normalizeExecution(run: Partial<WorkspaceRunRecord>): RunExecutionMetadata {
+  if (run.execution) {
+    return run.execution;
+  }
+
+  const usedFallback = (run.checkpoints ?? []).some((checkpoint) =>
+    checkpoint.toLowerCase().includes('fallback'),
+  );
+
+  return {
+    provider: usedFallback ? 'fallback' : 'openai-compatible',
+    model: usedFallback ? 'fallback-recipe' : 'deepseek-v4-flash',
+    mode: usedFallback ? 'fallback' : 'provider',
+  };
+}
+
+function normalizeRunRecord(run: Partial<WorkspaceRunRecord>): WorkspaceRunRecord {
+  const now = new Date().toISOString();
+
+  return {
+    id: run.id ?? randomUUID(),
+    workspaceId: run.workspaceId ?? 'workspace-primary',
+    title: run.title ?? 'Untitled run',
+    recipe: run.recipe ?? 'learning-path',
+    status: run.status ?? 'draft',
+    currentStep: run.currentStep ?? 'drafting',
+    phase: normalizeRunPhase(run),
+    dossier: run.dossier ?? null,
+    approval: run.approval ?? null,
+    artifactBundle: run.artifactBundle ?? null,
+    artifacts: run.artifacts ?? [],
+    citations: run.citations?.length ? run.citations : run.resultPackage?.citations ?? [],
+    resultPackage:
+      run.resultPackage ??
+      ({
+        summary: '',
+        recommendation: '',
+        citations: [],
+        attachments: [],
+        nextActions: [],
+        confidence: 0,
+        openQuestions: [],
+      } satisfies ResultPackage),
+    checkpoints: run.checkpoints ?? [],
+    sources: run.sources ?? [],
+    execution: normalizeExecution(run),
+    activities: normalizeActivities(run),
+    createdAt: run.createdAt ?? now,
+    updatedAt: run.updatedAt ?? now,
+  };
+}
+
 function normalizeStore(store: Partial<DecisionWorkspaceStore> | undefined): DecisionWorkspaceStore {
   const defaultStore = createDefaultStore();
+  const sourceWorkspaces = Array.isArray(store?.workspaces)
+    ? (store?.workspaces ?? [])
+    : defaultStore.workspaces;
+  const sourceRuns = Array.isArray(store?.runs) ? (store?.runs ?? []) : defaultStore.runs;
+  const sourceProviderSettings = Array.isArray(store?.providerSettings)
+    ? (store?.providerSettings ?? [])
+    : defaultStore.providerSettings;
+
+  const legacyWorkspaceIds = sourceWorkspaces
+    .filter(isLegacyDemoWorkspace)
+    .map((workspace) => workspace.id);
+
+  if (sourceWorkspaces.length === 1 && sourceWorkspaces[0] && isLegacyDemoWorkspace(sourceWorkspaces[0])) {
+    const legacyWorkspace = sourceWorkspaces[0];
+
+    return {
+      workspaces: [
+        {
+          ...legacyWorkspace,
+          name: 'Workspace',
+          slug: 'workspace',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+      runs: [],
+      providerSettings: sourceProviderSettings,
+    };
+  }
+
+  const normalizedWorkspaces = sourceWorkspaces.filter(
+    (workspace) => !legacyWorkspaceIds.includes(workspace.id),
+  );
+
   return {
-    workspaces: Array.isArray(store?.workspaces) ? store?.workspaces ?? [] : defaultStore.workspaces,
-    runs: Array.isArray(store?.runs) ? store?.runs ?? [] : defaultStore.runs,
-    providerSettings: Array.isArray(store?.providerSettings) ? store?.providerSettings ?? [] : defaultStore.providerSettings,
+    workspaces: normalizedWorkspaces.length > 0 ? normalizedWorkspaces : defaultStore.workspaces,
+    runs: sourceRuns
+      .filter((run) => !legacyWorkspaceIds.includes(run.workspaceId ?? ''))
+      .map(normalizeRunRecord),
+    providerSettings: sourceProviderSettings.filter(
+      (setting) => !legacyWorkspaceIds.includes(setting.workspaceId),
+    ),
   };
 }
 
@@ -94,7 +265,9 @@ function readStoreFromDisk(filePath: string): DecisionWorkspaceStore {
   try {
     const content = readFileSync(filePath, 'utf8');
     const parsed = JSON.parse(content) as Partial<DecisionWorkspaceStore>;
-    return normalizeStore(parsed);
+    const normalized = normalizeStore(parsed);
+    writeStoreToDisk(normalized, filePath);
+    return normalized;
   } catch {
     const store = createDefaultStore();
     writeStoreToDisk(store, filePath);
@@ -114,10 +287,21 @@ function persistStore(store: DecisionWorkspaceStore): void {
 }
 
 function getStore(): DecisionWorkspaceStore {
-  if (!globalStore.__decisionWorkspaceStore) {
-    const filePath = getStoreFilePath();
+  const filePath = getStoreFilePath();
+
+  if (
+    !globalStore.__decisionWorkspaceStore ||
+    globalStore.__decisionWorkspaceStoreFile !== filePath
+  ) {
     globalStore.__decisionWorkspaceStore = readStoreFromDisk(filePath);
     globalStore.__decisionWorkspaceStoreFile = filePath;
+  }
+
+  const normalized = normalizeStore(globalStore.__decisionWorkspaceStore);
+
+  if (JSON.stringify(normalized) !== JSON.stringify(globalStore.__decisionWorkspaceStore)) {
+    globalStore.__decisionWorkspaceStore = normalized;
+    persistStore(normalized);
   }
 
   return globalStore.__decisionWorkspaceStore;
@@ -162,11 +346,21 @@ export function createWorkspaceRun(
     recipe: input.recipe,
     status: input.status ?? 'draft',
     currentStep: input.currentStep ?? 'drafting',
+    phase: input.phase ?? normalizeRunPhase(input),
+    dossier: input.dossier ?? null,
+    approval: input.approval ?? null,
+    artifactBundle: input.artifactBundle ?? null,
     artifacts: input.artifacts ?? [],
     citations: input.citations ?? [],
     resultPackage: input.resultPackage,
     checkpoints: input.checkpoints ?? [],
     sources: input.sources ?? [],
+    execution: input.execution ?? {
+      provider: 'fallback',
+      model: 'fallback-recipe',
+      mode: 'fallback',
+    },
+    activities: input.activities ?? normalizeActivities(input),
     createdAt: now,
     updatedAt: now,
   };
