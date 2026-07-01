@@ -70,3 +70,10 @@ Focused Task 3 unit tests passed: 3 files, 8 tests.
 
 ## Verification
 - `npm run test:unit -- --run tests/unit/server/approve-run.test.ts`
+
+## Lock acquisition leak fix
+- Moved the approval in-flight cleanup into the `POST /api/workspaces/[workspaceId]/runs/[runId]/approve` `try/finally` scope so `inFlightApprovals` is cleared even when `acquireApprovalLock()` throws.
+- Added a regression test that forces lock acquisition to fail, then verifies a subsequent approval attempt is no longer stuck at 409 once the collision is removed.
+
+## Verification
+- `npm run test:unit -- --run tests/unit/server/approve-run.test.ts`

@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import * as fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,12 +40,13 @@ describe('run approval flow', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     process.env.PLAYWRIGHT_TEST = '1';
-    await rm(approvalLockRoot, { recursive: true, force: true });
+    await fsPromises.rm(approvalLockRoot, { recursive: true, force: true });
   });
 
   afterEach(async () => {
     delete process.env.PLAYWRIGHT_TEST;
-    await rm(approvalLockRoot, { recursive: true, force: true });
+    vi.restoreAllMocks();
+    await fsPromises.rm(approvalLockRoot, { recursive: true, force: true });
   });
 
   it('creates a researched run that waits for approval', async () => {
@@ -537,5 +538,35 @@ describe('run approval flow', () => {
       }),
     );
     expect(mocks.executeExecutionPhaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the in-flight approval marker when lock acquisition throws', async () => {
+    const lockCollisionPath = path.join(approvalLockRoot, 'workspace-1');
+    await fsPromises.mkdir(approvalLockRoot, { recursive: true });
+    await fsPromises.writeFile(lockCollisionPath, 'collision');
+
+    const firstApproval = approveRunPOST(
+      new Request('http://localhost/api/workspaces/workspace-1/runs/run-1/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }),
+      { params: Promise.resolve({ workspaceId: 'workspace-1', runId: 'run-1' }) },
+    );
+
+    await expect(firstApproval).rejects.toThrow();
+
+    await fsPromises.rm(lockCollisionPath, { force: true });
+
+    const secondResponse = await approveRunPOST(
+      new Request('http://localhost/api/workspaces/workspace-1/runs/run-1/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }),
+      { params: Promise.resolve({ workspaceId: 'workspace-1', runId: 'run-1' }) },
+    );
+    expect(secondResponse.status).toBe(404);
+    expect(secondResponse.status).toBe(404);
   });
 });

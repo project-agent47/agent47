@@ -92,13 +92,14 @@ export async function POST(
   }
 
   inFlightApprovals.add(approvalKey);
-  const releaseLock = await acquireApprovalLock(workspaceId, runId);
-  if (!releaseLock) {
-    inFlightApprovals.delete(approvalKey);
-    return NextResponse.json({ error: 'Run approval is already in progress.' }, { status: 409 });
-  }
+  let releaseLock: (() => Promise<void>) | null = null;
 
   try {
+    releaseLock = await acquireApprovalLock(workspaceId, runId);
+    if (!releaseLock) {
+      return NextResponse.json({ error: 'Run approval is already in progress.' }, { status: 409 });
+    }
+
     const body = (await request.json().catch(() => ({}))) as { approved?: boolean };
     if (body.approved !== true) {
       return NextResponse.json({ error: 'Approval was not granted.' }, { status: 400 });
@@ -230,6 +231,8 @@ export async function POST(
     }
   } finally {
     inFlightApprovals.delete(approvalKey);
-    await releaseLock();
+    if (releaseLock) {
+      await releaseLock();
+    }
   }
 }
