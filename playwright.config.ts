@@ -15,7 +15,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'PLAYWRIGHT_TEST=1 npm run dev -- --hostname 127.0.0.1 --port 3000',
+    command:
+      'PLAYWRIGHT_TEST=1 DECISION_WORKSPACE_STORE_FILE=.storage/playwright-store.json npm run dev -- --hostname 127.0.0.1 --port 3000',
     url: 'http://127.0.0.1:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,
