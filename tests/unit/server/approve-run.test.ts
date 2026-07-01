@@ -114,6 +114,28 @@ describe('run approval flow', () => {
         dossier,
         approval: expect.objectContaining({ status: 'pending' }),
         artifactBundle: null,
+        activities: [
+          expect.objectContaining({
+            kind: 'intake',
+            title: 'Intake captured',
+          }),
+          ...[
+            {
+              id: 'search',
+              title: 'Search session created',
+              detail: 'Find the best frontend roadmap',
+              kind: 'provider',
+              status: 'completed',
+            },
+            {
+              id: 'dossier',
+              title: 'Research dossier created',
+              detail: 'Research is ready for approval.',
+              kind: 'reasoning',
+              status: 'completed',
+            },
+          ],
+        ],
       }),
     );
   });

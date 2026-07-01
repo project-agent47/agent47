@@ -63,3 +63,10 @@ Focused Task 3 unit tests passed: 3 files, 8 tests.
 
 ## Verification
 - `npm run test:unit -- --run tests/unit/runtime/execute-research-phase.test.ts`
+
+## Intake lifecycle fix
+- Added an explicit `Intake captured` activity to the locally created research run before the research dossier activities are persisted.
+- Updated the focused Task 3 server test to assert the created run records the intake activity ahead of the research activities.
+
+## Verification
+- `npm run test:unit -- --run tests/unit/server/approve-run.test.ts`

@@ -145,7 +145,16 @@ export async function POST(
       model: 'research-dossier',
       mode: 'fallback',
     },
-    activities: research.activities,
+    activities: [
+      {
+        id: `${workspaceId}-${title}-intake`,
+        title: 'Intake captured',
+        detail: 'The request was accepted for local research.',
+        kind: 'intake',
+        status: 'completed',
+      },
+      ...research.activities,
+    ],
   });
 
   return NextResponse.json({ run });
