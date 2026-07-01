@@ -5,7 +5,7 @@ import type { BrowserTool, DocumentReaderTool, SearchTool } from '@/lib/tools/ty
 function recordSearchSession(dossier: ResearchDossier, session: Awaited<ReturnType<SearchTool['run']>>): void {
   dossier.searchSessions.push({
     query: session.query,
-    candidates: session.candidates.map((candidate) => candidate.title),
+    candidates: session.candidates.map((candidate) => `${candidate.title} (${candidate.url})`),
     opened: session.opened,
     discarded: session.discarded,
   });

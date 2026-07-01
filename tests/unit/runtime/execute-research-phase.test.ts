@@ -41,6 +41,7 @@ describe('executeResearchPhase', () => {
     expect(browserTool.inspect).toHaveBeenCalledWith('https://a.test');
     expect(documentTool.read).toHaveBeenCalledWith('brief.md');
     expect(result.dossier.goal).toBe('Find the best frontend roadmap');
+    expect(result.dossier.searchSessions[0].candidates).toEqual(['A (https://a.test)']);
     expect(result.dossier.findings).toEqual(['Roadmap summary', 'Brief']);
     expect(result.dossier.proposedExecutionPlan).toEqual([
       'Open the research candidate in the browser',
