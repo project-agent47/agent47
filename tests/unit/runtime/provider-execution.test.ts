@@ -59,9 +59,17 @@ describe('executeRecipeWithProvider', () => {
     });
 
     expect(result.providerUsed).toBe('openai-compatible');
+    expect(result.modelUsed).toBe('deepseek-v4-flash');
+    expect(result.mode).toBe('provider');
     expect(result.resultPackage.summary).toContain('focused learning path');
     expect(result.resultPackage.nextActions).toEqual(['Ship a tiny project']);
     expect(result.checkpoints).toContain('Provider response received');
+    expect(result.activities.map((item) => item.title)).toEqual([
+      'Intake captured',
+      'Model selected',
+      'Provider response received',
+      'Result package created',
+    ]);
   });
 
   it('uses the OPENAI-style environment aliases when they are present', async () => {
@@ -96,6 +104,7 @@ describe('executeRecipeWithProvider', () => {
     });
 
     expect(result.providerUsed).toBe('openai-compatible');
+    expect(result.modelUsed).toBe('deepseek-v4-flash');
     expect(fetchMock).toHaveBeenCalled();
   });
 
@@ -115,6 +124,12 @@ describe('executeRecipeWithProvider', () => {
     });
 
     expect(result.providerUsed).toBe('fallback');
+    expect(result.mode).toBe('fallback');
+    expect(result.activities.map((item) => item.title)).toEqual([
+      'Intake captured',
+      'Playwright test mode',
+      'Fallback recipe used',
+    ]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -133,6 +148,7 @@ describe('executeRecipeWithProvider', () => {
     });
 
     expect(result.providerUsed).toBe('fallback');
+    expect(result.mode).toBe('fallback');
     expect(result.resultPackage.summary).toContain('Learn Rust');
     expect(result.resultPackage.nextActions).toEqual(['Create a weekly study schedule', 'Pick one project to ship']);
   });

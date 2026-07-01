@@ -37,6 +37,32 @@ export function ResultPackageView({ packageData }: ResultPackageViewProps) {
             ))}
           </ul>
         </div>
+        {packageData.citations.length > 0 ? (
+          <div className="surface-card">
+            <h3 className="text-sm font-medium uppercase tracking-[0.2em] text-sky-300">Sources</h3>
+            <ul className="mt-3 space-y-3 text-sm leading-7 text-slate-300">
+              {packageData.citations.map((citation, index) => (
+                <li key={`${citation.title}-${index}`}>
+                  <span className="font-medium text-slate-100">{citation.title}</span>
+                  <span className="text-slate-500"> · {citation.source}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {packageData.openQuestions.length > 0 ? (
+          <div className="surface-card">
+            <h3 className="text-sm font-medium uppercase tracking-[0.2em] text-sky-300">Open questions</h3>
+            <ul className="mt-3 space-y-3 text-sm leading-7 text-slate-300">
+              {packageData.openQuestions.map((question) => (
+                <li key={question} className="flex gap-2">
+                  <span className="mt-2 h-2 w-2 rounded-full bg-sky-400" />
+                  <span>{question}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </section>
   );

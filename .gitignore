@@ -5,5 +5,7 @@
 .agents/
 node_modules/
 test-results/
+artifacts/
+tsconfig.tsbuildinfo
 plan.md
 skills-lock.json

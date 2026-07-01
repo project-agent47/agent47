@@ -8,7 +8,7 @@ interface ProviderSettingsFormProps {
 
 export function ProviderSettingsForm({ workspaceId }: ProviderSettingsFormProps) {
   const [provider, setProvider] = useState('deepseek-compatible');
-  const [model, setModel] = useState('deepseek-chat');
+  const [model, setModel] = useState('deepseek-v4-flash');
   const [apiKey, setApiKey] = useState('');
   const [message, setMessage] = useState<string | null>(null);
 
