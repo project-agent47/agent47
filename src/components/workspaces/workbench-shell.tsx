@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import type { WorkspaceRecord, WorkspaceRunRecord } from '@/lib/workspace-store';
 import { RunActivityPane } from './run-activity-pane';
 import { type DetailItem, RunInspectorPane } from './run-inspector-pane';
@@ -20,18 +20,26 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
   const [selectedRunId, setSelectedRunId] = useState(initialRuns[0]?.id ?? null);
   const [draft, setDraft] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [message, setMessage] = useState('No active run yet. Start with a single request.');
+  const [message, setMessage] = useState<string | null>(null);
   const [activeDetail, setActiveDetail] = useState<DetailItem | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
   const selectedRun = useMemo(
     () => runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null,
     [runs, selectedRunId],
   );
 
+  useEffect(() => {
+    document.body.dataset.theme = theme;
+  }, [theme]);
+
   const detailItems = useMemo<DetailItem[]>(() => {
     if (!selectedRun) {
       return [];
     }
+
+    const citations =
+      selectedRun.resultPackage.citations.length > 0 ? selectedRun.resultPackage.citations : selectedRun.citations;
 
     const items: DetailItem[] = [
       { id: 'summary', title: 'Summary', body: selectedRun.resultPackage.summary },
@@ -39,19 +47,62 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
     ];
 
     selectedRun.resultPackage.nextActions.forEach((action, index) => {
-      items.push({ id: `action-${index}`, title: 'Next action', body: action });
+      items.push({ id: `action-${index}`, title: `Next action ${index + 1}`, body: action });
     });
 
-    selectedRun.citations.forEach((citation, index) => {
+    citations.forEach((citation, index) => {
       items.push({
         id: `citation-${index}`,
-        title: citation.title || 'Citation',
+        title: citation.title || `Source ${index + 1}`,
         body: citation.url ? `${citation.source} · ${citation.url}` : citation.source,
+      });
+    });
+
+    selectedRun.resultPackage.openQuestions.forEach((question, index) => {
+      items.push({
+        id: `question-${index}`,
+        title: `Open question ${index + 1}`,
+        body: question,
+      });
+    });
+
+    selectedRun.dossier?.findings.forEach((finding, index) => {
+      items.push({
+        id: `finding-${index}`,
+        title: `Finding ${index + 1}`,
+        body: finding,
+      });
+    });
+
+    selectedRun.dossier?.proposedExecutionPlan.forEach((step, index) => {
+      items.push({
+        id: `plan-${index}`,
+        title: `Execution step ${index + 1}`,
+        body: step,
+      });
+    });
+
+    selectedRun.artifactBundle?.executionLog.forEach((entry, index) => {
+      items.push({
+        id: `artifact-log-${index}`,
+        title: `Artifact log ${index + 1}`,
+        body: entry,
       });
     });
 
     return items;
   }, [selectedRun]);
+
+  const resolvedDetail =
+    detailItems.find((item) => item.id === activeDetail?.id) ?? detailItems[0] ?? null;
+
+  const resolvedMessage =
+    message ??
+    (selectedRun
+      ? selectedRun.execution.mode === 'provider'
+        ? `Completed with ${selectedRun.execution.model} via ${selectedRun.execution.provider}.`
+        : 'This run used the local fallback recipe.'
+      : 'Start with a single request.');
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -85,15 +136,30 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
     const data = (await response.json()) as { run: WorkspaceRunRecord };
     setRuns((current) => [data.run, ...current]);
     setSelectedRunId(data.run.id);
-    setActiveDetail(null);
+    setActiveDetail({
+      id: 'summary',
+      title: 'Summary',
+      body: data.run.resultPackage.summary,
+    });
     setDraft('');
-    setMessage('Run created. Review the brief and the next steps on the right.');
+    setMessage(
+      data.run.execution.mode === 'provider'
+        ? `Run created with ${data.run.execution.model}. Review the evidence and next steps on the right.`
+        : 'Run created with the fallback recipe. Review the evidence and next steps on the right.',
+    );
     setIsSubmitting(false);
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(56,189,248,0.14),_transparent_24%),linear-gradient(135deg,_#071018_0%,_#0c1723_46%,_#060b11_100%)] text-slate-100">
-      <div className="grid min-h-screen xl:grid-cols-[260px_minmax(0,1fr)_340px]">
+    <main
+      className="min-h-screen"
+      style={{
+        background:
+          'radial-gradient(circle at top left, rgba(148, 163, 184, 0.18), transparent 26%), var(--app-bg)',
+        color: 'var(--text-primary)',
+      }}
+    >
+      <div className="grid h-screen min-h-screen min-w-0 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
         <WorkbenchSidebar
           workspace={workspace}
           workspaces={workspaces}
@@ -102,15 +168,21 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
           onSelectRun={(runId) => {
             setSelectedRunId(runId);
             setActiveDetail(null);
+            setMessage(null);
           }}
         />
 
-        <RunActivityPane selectedRun={selectedRun} message={message}>
+        <RunActivityPane
+          selectedRun={selectedRun}
+          message={resolvedMessage}
+          theme={theme}
+          onToggleTheme={() => setTheme((current) => (current === 'light' ? 'dark' : 'light'))}
+        >
           <WorkbenchComposer
             draft={draft}
             isSubmitting={isSubmitting}
             starterPrompts={starterPrompts}
-            message={message}
+            message={resolvedMessage}
             onDraftChange={setDraft}
             onSubmit={handleSubmit}
             onUsePrompt={setDraft}
@@ -120,7 +192,7 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
         <RunInspectorPane
           workspaceId={workspace.id}
           selectedRun={selectedRun}
-          activeDetail={activeDetail}
+          activeDetail={resolvedDetail}
           detailItems={detailItems}
           onSelectDetail={setActiveDetail}
         />

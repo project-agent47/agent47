@@ -4,14 +4,46 @@
 
 @layer base {
   :root {
+    color-scheme: light;
+    --app-bg: #f5f7fb;
+    --surface-bg: #ffffff;
+    --surface-muted: #edf2f7;
+    --surface-strong: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #64748b;
+    --border-subtle: #dbe3f0;
+    --border-strong: #cbd5e1;
+    --accent-bg: #0f172a;
+    --accent-fg: #f8fafc;
+    --accent-soft: rgba(15, 23, 42, 0.06);
+    --shadow-soft: 0 20px 45px rgba(15, 23, 42, 0.08);
+    --shadow-strong: 0 28px 80px rgba(15, 23, 42, 0.12);
+  }
+
+  body[data-theme='dark'] {
     color-scheme: dark;
+    --app-bg: #0a0f14;
+    --surface-bg: #111827;
+    --surface-muted: #172131;
+    --surface-strong: #0f1720;
+    --text-primary: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+    --border-subtle: rgba(148, 163, 184, 0.18);
+    --border-strong: rgba(226, 232, 240, 0.12);
+    --accent-bg: #cbd5e1;
+    --accent-fg: #0f172a;
+    --accent-soft: rgba(255, 255, 255, 0.06);
+    --shadow-soft: 0 20px 45px rgba(0, 0, 0, 0.28);
+    --shadow-strong: 0 28px 80px rgba(0, 0, 0, 0.34);
   }
 
   body {
     margin: 0;
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0a0f14;
-    color: #e2e8f0;
+    background: var(--app-bg) !important;
+    color: var(--text-primary) !important;
   }
 
   * {
@@ -21,15 +53,22 @@
 
 @layer components {
   .panel {
-    @apply rounded-[1.25rem] border border-stone-200/80 bg-white/90 shadow-[0_10px_35px_rgba(15,23,42,0.04)] backdrop-blur;
+    @apply rounded-[1.25rem] border backdrop-blur;
+    border-color: var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-bg) 92%, transparent);
+    box-shadow: var(--shadow-soft);
   }
 
   .panel-strong {
-    @apply rounded-[1.25rem] border border-stone-200 bg-white shadow-[0_14px_45px_rgba(15,23,42,0.05)];
+    @apply rounded-[1.25rem] border;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    box-shadow: var(--shadow-strong);
   }
 
   .eyebrow {
-    @apply text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-slate-500;
+    @apply text-[0.68rem] font-semibold uppercase tracking-[0.26em];
+    color: var(--text-muted);
   }
 
   .display-font {
@@ -37,51 +76,80 @@
   }
 
   .btn-primary {
-    @apply rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700;
+    @apply rounded-full px-4 py-2.5 text-sm font-semibold transition;
+    background: var(--accent-bg);
+    color: var(--accent-fg);
   }
 
   .btn-secondary {
-    @apply rounded-full border border-stone-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-stone-300 hover:bg-stone-50;
+    @apply rounded-full border px-4 py-2.5 text-sm font-medium transition;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    color: var(--text-primary);
   }
 
   .input-field {
-    @apply w-full rounded-2xl border border-stone-200 bg-white px-3.5 py-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-slate-400;
+    @apply w-full rounded-2xl border px-3.5 py-3 text-sm outline-none focus:ring-2;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    color: var(--text-primary);
   }
 
   .surface-card {
-    @apply rounded-[1rem] border border-stone-200 bg-stone-50/90 p-4;
+    @apply rounded-[1rem] border p-4;
+    border-color: var(--border-subtle);
+    background: var(--surface-muted);
   }
 
   .entry-shell {
-    @apply min-h-screen text-slate-100;
+    @apply min-h-screen;
   }
 
   .entry-shell__header {
-    @apply flex items-center justify-between gap-4 border-b border-white/10 py-4;
+    @apply flex items-center justify-between gap-4 border-b py-4;
+    border-color: var(--border-subtle);
   }
 
   .entry-shell__mark {
-    @apply flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-sm font-semibold text-slate-100;
+    @apply flex h-9 w-9 items-center justify-center rounded-xl border text-sm font-semibold;
+    border-color: var(--border-subtle);
+    background: var(--surface-muted);
+    color: var(--text-primary);
   }
 
   .entry-shell__wordmark {
-    @apply text-sm font-semibold tracking-[0.24em] text-slate-100;
+    @apply text-sm font-semibold tracking-[0.24em];
+    color: var(--text-primary);
   }
 
   .entry-shell__subhead {
-    @apply text-xs text-slate-500;
+    @apply text-xs;
+    color: var(--text-muted);
   }
 
   .entry-shell__action {
-    @apply rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10;
+    @apply rounded-full border px-4 py-2.5 text-sm font-medium transition;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    color: var(--text-primary);
+  }
+
+  .entry-shell__toggle {
+    @apply rounded-full border px-4 py-2.5 text-sm font-medium transition;
+    border-color: var(--border-subtle);
+    background: var(--surface-muted);
+    color: var(--text-primary);
   }
 
   .entry-page {
-    @apply flex min-h-[calc(100vh-73px)] items-center justify-center py-12;
+    @apply flex min-h-[calc(100vh-73px)] items-start justify-center py-20;
   }
 
   .entry-panel {
-    @apply w-full max-w-3xl rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-8 shadow-[0_24px_80px_rgba(0,0,0,0.24)];
+    @apply w-full max-w-3xl rounded-[1.5rem] border p-8;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    box-shadow: var(--shadow-strong);
   }
 
   .entry-panel--narrow {
@@ -89,39 +157,51 @@
   }
 
   .entry-kicker {
-    @apply text-[0.68rem] font-semibold uppercase tracking-[0.28em] text-slate-500;
+    @apply text-[0.68rem] font-semibold uppercase tracking-[0.28em];
+    color: var(--text-muted);
   }
 
   .entry-title {
-    @apply mt-4 text-4xl font-semibold tracking-[-0.03em] text-white;
+    @apply mt-4 text-4xl font-semibold tracking-[-0.03em];
+    color: var(--text-primary);
   }
 
   .entry-copy {
-    @apply mt-4 max-w-2xl text-base leading-8 text-slate-400;
+    @apply mt-4 max-w-2xl text-base leading-8;
+    color: var(--text-secondary);
   }
 
   .entry-primary {
-    @apply inline-flex items-center justify-center rounded-full bg-cyan-300 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200;
+    @apply inline-flex items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold transition;
+    background: var(--accent-bg);
+    color: var(--accent-fg);
   }
 
   .entry-secondary {
-    @apply rounded-full border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-white/10;
+    @apply rounded-full border px-4 py-2.5 text-sm font-medium transition;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    color: var(--text-primary);
   }
 
   .entry-label {
-    @apply mb-2 block text-sm text-slate-300;
+    @apply mb-2 block text-sm;
+    color: var(--text-secondary);
   }
 
   .entry-input {
-    @apply w-full rounded-2xl border border-white/10 bg-[#0f1720] px-4 py-3 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-cyan-400/40 focus:ring-2 focus:ring-cyan-400/20;
+    @apply w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2;
+    border-color: var(--border-subtle);
+    background: var(--surface-bg);
+    color: var(--text-primary);
   }
 
   .entry-error {
-    @apply text-sm text-rose-300;
+    @apply text-sm text-rose-500;
   }
 }
 
 ::selection {
-  background: rgba(103, 232, 249, 0.22);
-  color: #f8fafc;
+  background: rgba(15, 23, 42, 0.18);
+  color: var(--text-primary);
 }

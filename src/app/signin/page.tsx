@@ -13,7 +13,7 @@ export default function SignInPage() {
     event.preventDefault();
     setError(null);
 
-    const response = await fetch('/api/test/login', {
+    const response = await fetch('/api/session/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -27,8 +27,6 @@ export default function SignInPage() {
       return;
     }
 
-    document.cookie = `decision-workspace-auth-client=${encodeURIComponent(JSON.stringify({ userId: 'demo-user', email }))}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`;
-
     const workspacesResponse = await fetch('/api/workspaces');
     const payload = (await workspacesResponse.json().catch(() => ({}))) as { workspaces?: Array<{ id: string }> };
     const workspaceId = payload.workspaces?.[0]?.id;
@@ -37,7 +35,7 @@ export default function SignInPage() {
   };
 
   return (
-    <main className="entry-page">
+    <main className="entry-page" data-entry-surface="signin">
       <section className="entry-panel entry-panel--narrow">
         <p className="entry-kicker">Secure access</p>
         <h1 className="entry-title">Open your workspace.</h1>

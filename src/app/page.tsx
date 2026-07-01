@@ -2,7 +2,7 @@ import Link from 'next/link';
 
 export default function HomePage() {
   return (
-    <main className="entry-page">
+    <main className="entry-page" data-entry-surface="home">
       <section className="entry-panel">
         <p className="entry-kicker">Decision workspace</p>
         <h1 className="entry-title">A workbench for decisions that deserve more than chat.</h1>
