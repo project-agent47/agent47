@@ -15,6 +15,8 @@ interface RunInspectorPaneProps {
   activeDetail: DetailItem | null;
   detailItems: DetailItem[];
   onSelectDetail: (item: DetailItem) => void;
+  isApproving: boolean;
+  onApproveExecution: () => void;
 }
 
 export function RunInspectorPane({
@@ -23,6 +25,8 @@ export function RunInspectorPane({
   activeDetail,
   detailItems,
   onSelectDetail,
+  isApproving,
+  onApproveExecution,
 }: RunInspectorPaneProps) {
   const citations =
     selectedRun && selectedRun.resultPackage.citations.length > 0
@@ -174,6 +178,21 @@ export function RunInspectorPane({
             <p className="mt-2 text-sm leading-6" style={{ color: 'var(--text-secondary)' }}>
               {selectedRun.approval?.summary ?? 'The workbench will pause here once research is ready for review.'}
             </p>
+            {selectedRun.approval?.status === 'pending' ? (
+              <button
+                type="button"
+                onClick={onApproveExecution}
+                disabled={isApproving}
+                className="mt-4 inline-flex items-center rounded-full border px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60"
+                style={{
+                  borderColor: 'var(--border-subtle)',
+                  background: 'var(--surface-muted)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                {isApproving ? 'Approving execution…' : 'Approve execution'}
+              </button>
+            ) : null}
           </section>
 
           <section
@@ -199,6 +218,39 @@ export function RunInspectorPane({
                 Files and generated outputs will appear after execution finishes.
               </p>
             )}
+          </section>
+
+          <section
+            className="rounded-2xl border p-4"
+            style={{
+              borderColor: 'var(--border-subtle)',
+              background: 'var(--surface-bg)',
+            }}
+          >
+            <p className="text-[0.64rem] font-semibold uppercase tracking-[0.24em]" style={{ color: 'var(--text-muted)' }}>
+              Result package
+            </p>
+            <p className="mt-3 text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+              {selectedRun.resultPackage.recommendation}
+            </p>
+            {selectedRun.resultPackage.nextActions.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {selectedRun.resultPackage.nextActions.map((action) => (
+                  <li key={action} className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                    {action}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {selectedRun.resultPackage.attachments.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {selectedRun.resultPackage.attachments.map((attachment) => (
+                  <li key={attachment.id} className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {attachment.name}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </section>
 
           <div className="flex flex-wrap gap-2">

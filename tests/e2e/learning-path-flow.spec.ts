@@ -82,44 +82,31 @@ test('approves a research run and shows packaged artifacts in the workbench', as
   await expect(page.getByTestId('workbench-inspector')).toContainText('Awaiting approval');
   await expect(page.getByTestId('workbench-inspector')).toContainText('Research dossier ready for approval.');
 
-  const approveResult = (await page.evaluate(
-    async ({ workspaceId: currentWorkspaceId, runId }) => {
-      const response = await fetch(`/api/workspaces/${currentWorkspaceId}/runs/${runId}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approved: true }),
-      });
+  const approveResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().includes(`/api/workspaces/${workspaceId}/runs/${createdRunJson.run.id}/approve`),
+  );
+  await page.getByRole('button', { name: 'Approve execution' }).click();
 
-      return {
-        status: response.status,
-        body: (await response.json()) as {
-          run?: {
-            approval?: { status?: string } | null;
-            artifactBundle?: { generatedFileIds?: string[]; reportArtifactId?: string | null } | null;
-          };
-        },
-      };
-    },
-    { workspaceId, runId: createdRunJson.run.id },
-  )) as {
-    status: number;
-    body: {
-      run?: {
-        approval?: { status?: string } | null;
-        artifactBundle?: { generatedFileIds?: string[]; reportArtifactId?: string | null } | null;
-      };
+  const approvedRunJson = (await (await approveResponse).json()) as {
+    run: {
+      approval?: { status?: string } | null;
+      artifactBundle?: { generatedFileIds?: string[]; reportArtifactId?: string | null } | null;
+      resultPackage?: { summary?: string; recommendation?: string; attachments?: Array<{ name: string }> } | null;
     };
   };
-
-  expect(approveResult.status).toBe(200);
-  const approvedRunJson = approveResult.body;
 
   expect(approvedRunJson.run.approval?.status).toBe('approved');
   expect(approvedRunJson.run.artifactBundle?.generatedFileIds).toHaveLength(2);
   expect(approvedRunJson.run.artifactBundle?.reportArtifactId).toBeTruthy();
+  expect(approvedRunJson.run.resultPackage?.summary).toContain('Execution finished');
+  expect(approvedRunJson.run.resultPackage?.attachments?.map((attachment) => attachment.name)).toContain('research-report.md');
 
-  await page.reload();
   await expect(page.getByTestId('workbench-inspector')).toContainText('Approved for execution');
+  await expect(page.getByTestId('workbench-inspector')).toContainText('Execution finished for Research a frontend learning path.');
+  await expect(page.getByTestId('workbench-inspector')).toContainText('Review the packaged output.');
+  await expect(page.getByTestId('workbench-inspector')).toContainText('research-report.md');
   await expect(page.getByTestId('workbench-activity')).toContainText('Execution completed');
   await expect(page.getByTestId('workbench-activity')).toContainText('Execution packaged');
 

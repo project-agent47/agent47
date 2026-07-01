@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import { WorkbenchShell } from '@/components/workspaces/workbench-shell';
 import type { WorkspaceRecord, WorkspaceRunRecord } from '@/lib/workspace-store';
 
@@ -162,5 +162,141 @@ describe('WorkbenchShell', () => {
     expect(screen.getByRole('button', { name: 'Execution step 1' })).toBeInTheDocument();
     expect(screen.getAllByText('Fallback citation').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Waiting').length).toBeGreaterThan(0);
+  });
+
+  it('approves a pending run from the workbench and shows the packaged result', async () => {
+    const run: WorkspaceRunRecord = {
+      id: 'run-approve',
+      workspaceId: workspace.id,
+      title: 'Research a frontend learning path',
+      recipe: 'learning-path',
+      status: 'awaiting_approval',
+      currentStep: 'awaiting approval',
+      phase: 'approval',
+      dossier: {
+        goal: 'Research a frontend learning path',
+        constraints: ['Keep it concise and directly actionable.'],
+        searchSessions: [],
+        pageNotes: [],
+        documentNotes: [],
+        findings: ['Start with the web fundamentals before specializing.'],
+        proposedExecutionPlan: ['Package the findings into a small report.'],
+        openRisks: ['Available study time per week is still unknown.'],
+      },
+      approval: {
+        status: 'pending',
+        summary: 'Research dossier ready for approval.',
+      },
+      artifactBundle: null,
+      artifacts: [],
+      citations: [],
+      resultPackage: {
+        summary: 'Research dossier prepared for Research a frontend learning path.',
+        recommendation: 'Approve execution to continue.',
+        citations: [],
+        attachments: [],
+        nextActions: ['Review the research dossier', 'Approve execution'],
+        confidence: 0.8,
+        openQuestions: ['Available study time per week is still unknown.'],
+      },
+      checkpoints: ['Research dossier ready'],
+      sources: ['Research a frontend learning path'],
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+      execution: {
+        provider: 'openai-compatible',
+        model: 'deepseek-v4-flash',
+        mode: 'provider',
+      },
+      activities: [],
+    };
+
+    const approvedRun: WorkspaceRunRecord = {
+      ...run,
+      status: 'completed',
+      currentStep: 'done',
+      phase: 'package',
+      approval: {
+        status: 'approved',
+        summary: 'Research dossier ready for approval.',
+        approvedAt: '2024-01-01T00:05:00.000Z',
+      },
+      artifactBundle: {
+        reportArtifactId: 'artifact-report',
+        generatedFileIds: ['artifact-report', 'artifact-result'],
+        executionLog: ['Executed browser step: Package the findings into a small report.'],
+      },
+      artifacts: [
+        {
+          id: 'artifact-report',
+          name: 'research-report.md',
+          kind: 'markdown',
+          content: '# Report',
+        },
+        {
+          id: 'artifact-result',
+          name: 'result.json',
+          kind: 'json',
+          content: '{"findings":["Start with the web fundamentals before specializing."]}',
+        },
+      ],
+      resultPackage: {
+        summary: 'Execution finished for Research a frontend learning path.',
+        recommendation: 'Review the packaged output.',
+        citations: [],
+        attachments: [
+          {
+            id: 'artifact-report',
+            name: 'research-report.md',
+            kind: 'markdown',
+            content: '# Report',
+          },
+          {
+            id: 'artifact-result',
+            name: 'result.json',
+            kind: 'json',
+            content: '{"findings":["Start with the web fundamentals before specializing."]}',
+          },
+        ],
+        nextActions: ['Review the packaged report'],
+        confidence: 0.95,
+        openQuestions: ['Available study time per week is still unknown.'],
+      },
+      activities: [
+        {
+          id: 'run-approve-execution',
+          title: 'Execution completed',
+          detail: 'Executed browser step: Package the findings into a small report.',
+          kind: 'provider',
+          status: 'completed',
+        },
+      ],
+    };
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ run: approvedRun }),
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<WorkbenchShell workspace={workspace} initialRuns={[run]} workspaces={[workspace]} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve execution' }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(`/api/workspaces/${workspace.id}/runs/${run.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      }),
+    );
+
+    await waitFor(() => expect(screen.getAllByText('Approved for execution').length).toBeGreaterThan(0));
+    expect(screen.getAllByText('Execution finished for Research a frontend learning path.').length).toBeGreaterThan(0);
+    expect(screen.getByText('Review the packaged output.')).toBeInTheDocument();
+    expect(screen.getByText('research-report.md')).toBeInTheDocument();
+
+    vi.unstubAllGlobals();
   });
 });

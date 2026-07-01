@@ -20,6 +20,7 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
   const [selectedRunId, setSelectedRunId] = useState(initialRuns[0]?.id ?? null);
   const [draft, setDraft] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activeDetail, setActiveDetail] = useState<DetailItem | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -150,6 +151,43 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
     setIsSubmitting(false);
   }
 
+  async function handleApproveExecution() {
+    if (!selectedRun || selectedRun.approval?.status !== 'pending') {
+      return;
+    }
+
+    setIsApproving(true);
+    setMessage('Approving execution…');
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspace.id}/runs/${selectedRun.id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved: true }),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as { run?: WorkspaceRunRecord };
+
+      if (!response.ok || !data.run) {
+        setMessage('The workspace could not approve that run.');
+        return;
+      }
+
+      setRuns((current) => current.map((run) => (run.id === data.run?.id ? data.run : run)));
+      setSelectedRunId(data.run.id);
+      setActiveDetail({
+        id: 'summary',
+        title: 'Summary',
+        body: data.run.resultPackage.summary,
+      });
+      setMessage('Execution approved and packaged results are now available.');
+    } catch {
+      setMessage('The workspace could not approve that run.');
+    } finally {
+      setIsApproving(false);
+    }
+  }
+
   return (
     <main
       className="min-h-screen"
@@ -195,6 +233,8 @@ export function WorkbenchShell({ workspace, initialRuns, workspaces }: Workbench
           activeDetail={resolvedDetail}
           detailItems={detailItems}
           onSelectDetail={setActiveDetail}
+          isApproving={isApproving}
+          onApproveExecution={handleApproveExecution}
         />
       </div>
     </main>
