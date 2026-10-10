@@ -1,33 +1,7 @@
-import { existsSync } from 'node:fs';
-import { defineConfig, devices } from '@playwright/test';
-
-const chromiumPath =
-  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ??
-  (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
-
+import { defineConfig } from '@playwright/test';
 export default defineConfig({
-  testDir: './tests/e2e',
-  timeout: 60_000,
-  fullyParallel: false,
-  retries: 0,
-  use: {
-    baseURL: 'http://127.0.0.1:3000',
-    trace: 'on-first-retry',
-  },
-  webServer: {
-    command:
-      'PLAYWRIGHT_TEST=1 DECISION_WORKSPACE_STORE_FILE=.storage/playwright-store.json npm run dev -- --hostname 127.0.0.1 --port 3000',
-    url: 'http://127.0.0.1:3000',
-    reuseExistingServer: !process.env.CI,
-    timeout: 180_000,
-  },
-  projects: [
-    {
-      name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        launchOptions: chromiumPath ? { executablePath: chromiumPath } : undefined,
-      },
-    },
-  ],
+  testDir: './tests/e2e', fullyParallel: false, workers: 1,
+  use: { baseURL: 'http://127.0.0.1:5173', channel: 'chromium', viewport: { width: 1440, height: 1000 } },
+  webServer: { command: 'npm run dev', url: 'http://127.0.0.1:5173', reuseExistingServer: true },
+  reporter: 'list'
 });

@@ -1,0 +1,124 @@
+import { app, BrowserWindow, ipcMain, dialog, shell, session, protocol, net } from 'electron';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { realpath } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { TaskStore } from '../core/store';
+import { TaskRuntime } from '../core/runtime';
+import { sdkDriver } from '../core/model';
+import { artifactPath, sha256 } from '../core/tools';
+import { readFile, lstat } from 'node:fs/promises';
+import { CredentialStore } from './vault';
+import type { ModelDriver } from '../core/model';
+
+protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+const single = app.requestSingleInstanceLock();
+if (!single) app.quit();
+let window: BrowserWindow | undefined;
+let runtime: TaskRuntime;
+const grants = new Map<string, string>();
+const idSchema = z.string().uuid();
+const url = 'agent47://app/';
+
+function checkSender(event: Electron.IpcMainInvokeEvent): void {
+  if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || event.senderFrame?.url !== url) throw new Error('Untrusted IPC sender');
+}
+function handle(channel: string, operation: (value: unknown) => unknown): void {
+  ipcMain.handle(channel, async (event, value: unknown) => {
+    checkSender(event);
+    try { return await operation(value); }
+    catch (error) {
+      // Never send upstream model errors or secret values across IPC.
+      console.warn(`[${channel}] failed`);
+      const message = (error as Error).message;
+      const known = /^(Approval|Task not|Finished tasks|系统|切换|请填写|No folder|Folder permission)/.test(message);
+      throw new Error(known ? message : '操作未完成。请检查输入、权限与连接设置。');
+    }
+  });
+}
+const fixture: ModelDriver = async (_messages, _taskId, _signal, _skill) => ({
+  text: 'Electron runtime smoke test passed.', calls: [], messages: [{ role: 'assistant', content: 'Electron runtime smoke test passed.' }]
+});
+
+async function boot(): Promise<void> {
+  await app.whenReady();
+  const root = app.getPath('userData');
+  const artifacts = join(root, 'artifacts');
+  const vault = new CredentialStore(join(root, 'provider.json'));
+  const store = new TaskStore(join(root, 'tasks.db'));
+  const changed = () => window?.webContents.send('tasks:changed');
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : sdkDriver(() => vault.settings()), artifacts, changed);
+  protocol.handle('agent47', request => {
+    const parsed = new URL(request.url);
+    if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });
+    const pathname = decodeURIComponent(parsed.pathname);
+    if (pathname.includes('..') || pathname.includes('\\') || pathname.includes('\0')) return new Response('Forbidden', { status: 403 });
+    const file = join(__dirname, '..', 'renderer', pathname === '/' ? 'index.html' : pathname);
+    return net.fetch(pathToFileURL(file).toString());
+  });
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
+  handle('tasks:list', () => runtime.list());
+  handle('tasks:create', value => {
+    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional() }).strict().parse(value);
+    const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
+    if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
+    if (!vault.view().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
+    return runtime.create(input.goal, input.skill, folder);
+  });
+  handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
+  handle('tasks:decide', value => {
+    const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean() }).strict().parse(value);
+    runtime.decide(input.taskId, input.approvalId, input.digest, input.approve);
+  });
+  handle('folder:choose', async () => {
+    const answer = await dialog.showOpenDialog(window!, {
+      title: '允许 Agent47 读取此目录内的文本文件（内容会发送给所选模型）',
+      buttonLabel: '授权读取此目录', properties: ['openDirectory']
+    });
+    if (answer.canceled || !answer.filePaths[0]) return;
+    const path = await realpath(answer.filePaths[0]);
+    const id = randomUUID(); grants.set(id, path);
+    return { id, path };
+  });
+  handle('provider:view', () => vault.view());
+  handle('provider:save', value => {
+    if (runtime.list().some(t => ['running', 'queued', 'awaiting_approval'].includes(t.status))) throw new Error('请先停止或完成未结束的任务，再更改模型连接。');
+    vault.save(value as Parameters<CredentialStore['save']>[0]);
+  });
+  handle('provider:test', async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const result = await sdkDriver(() => vault.settings())([{ role: 'user', content: 'For a TypeScript coding-agent connectivity test, reply only AGENT47_API_OK. Do not call tools.' }], randomUUID(), controller.signal, 'general');
+      return result.text.slice(0, 240);
+    } finally { clearTimeout(timer); }
+  });
+  handle('artifact:open', async value => {
+    const input = z.object({ taskId: idSchema, artifactId: z.string().max(128) }).strict().parse(value);
+    const task = store.get(input.taskId);
+    const artifact = task.artifacts.find(a => a.id === input.artifactId);
+    if (!artifact) throw new Error('Task not found');
+    const path = await artifactPath(artifacts, task.id, artifact.id, artifact.name);
+    if ((await lstat(path)).isSymbolicLink()) throw new Error('Artifact symlink denied');
+    if (sha256(await readFile(path, 'utf8')) !== artifact.sha256) throw new Error('Artifact integrity failure');
+    const error = await shell.openPath(path); if (error) throw new Error('Could not open artifact');
+  });
+  window = new BrowserWindow({
+    width: 1440, height: 940, minWidth: 900, minHeight: 650, show: false,
+    backgroundColor: '#f5f6f4', title: 'Agent47', autoHideMenuBar: true,
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true }
+  });
+  window.webContents.on('will-navigate', (event, target) => { if (target !== url) event.preventDefault(); });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.on('closed', () => { window = undefined; });
+  app.on('second-instance', () => { window?.show(); window?.focus(); });
+  await window.loadURL(url); window.show(); runtime.start();
+}
+if (single) void boot().catch(() => {
+  dialog.showErrorBox('Agent47 启动失败', '本地存储或应用初始化失败。原有数据未被重置。请备份用户数据目录后排查。');
+  app.exit(1);
+});
+app.on('before-quit', () => runtime?.shutdown());
+app.on('window-all-closed', () => app.quit());
