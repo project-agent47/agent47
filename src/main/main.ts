@@ -11,6 +11,7 @@ import { artifactPath, sha256 } from '../core/tools';
 import { readFile, lstat } from 'node:fs/promises';
 import { CredentialStore } from './vault';
 import type { ModelDriver } from '../core/model';
+import { modelTransport } from './transport';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const single = app.requestSingleInstanceLock();
@@ -46,9 +47,19 @@ async function boot(): Promise<void> {
   const root = app.getPath('userData');
   const artifacts = join(root, 'artifacts');
   const vault = new CredentialStore(join(root, 'provider.json'));
+  const transport = modelTransport();
+  // Explicit authenticated proxy mode is a separate credential source, not a fake model.
+  // Confine its key-free configuration to the approved OpenCode DeepSeek route.
+  const providerView = () => {
+    const view = vault.view();
+    const proxyConfigured = Boolean(transport.fetch && view.baseURL === 'https://opencode.ai/zen/go/v1' && view.model.startsWith('deepseek-'));
+    return { ...view, configured: view.configured || proxyConfigured };
+  };
+  const driver = sdkDriver(() => vault.settings(), transport.fetch,
+    failure => console.warn('[model-diagnostic] ' + JSON.stringify(failure)));
   const store = new TaskStore(join(root, 'tasks.db'));
   const changed = () => window?.webContents.send('tasks:changed');
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : sdkDriver(() => vault.settings()), artifacts, changed);
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed);
   protocol.handle('agent47', request => {
     const parsed = new URL(request.url);
     if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });
@@ -64,7 +75,7 @@ async function boot(): Promise<void> {
     const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional() }).strict().parse(value);
     const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
     if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
-    if (!vault.view().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
+    if (!providerView().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
     return runtime.create(input.goal, input.skill, folder);
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
@@ -82,7 +93,7 @@ async function boot(): Promise<void> {
     const id = randomUUID(); grants.set(id, path);
     return { id, path };
   });
-  handle('provider:view', () => vault.view());
+  handle('provider:view', providerView);
   handle('provider:save', value => {
     if (runtime.list().some(t => ['running', 'queued', 'awaiting_approval'].includes(t.status))) throw new Error('请先停止或完成未结束的任务，再更改模型连接。');
     vault.save(value as Parameters<CredentialStore['save']>[0]);
@@ -91,7 +102,7 @@ async function boot(): Promise<void> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
     try {
-      const result = await sdkDriver(() => vault.settings())([{ role: 'user', content: 'For a TypeScript coding-agent connectivity test, reply only AGENT47_API_OK. Do not call tools.' }], randomUUID(), controller.signal, 'general');
+      const result = await driver([{ role: 'user', content: 'For a TypeScript coding-agent connectivity test, reply only AGENT47_API_OK. Do not call tools.' }], randomUUID(), controller.signal, 'general');
       return result.text.slice(0, 240);
     } finally { clearTimeout(timer); }
   });
@@ -115,6 +126,7 @@ async function boot(): Promise<void> {
   window.on('closed', () => { window = undefined; });
   app.on('second-instance', () => { window?.show(); window?.focus(); });
   await window.loadURL(url); window.show(); runtime.start();
+  app.on('will-quit', () => { void transport.close(); });
 }
 if (single) void boot().catch(() => {
   dialog.showErrorBox('Agent47 启动失败', '本地存储或应用初始化失败。原有数据未被重置。请备份用户数据目录后排查。');

@@ -21,7 +21,7 @@ async function setup() {
 describe('credential boundary (native backend mocked)', () => {
   it('persists ciphertext only and never returns key metadata', async () => {
     const { path, vault } = await setup();
-    vault.save({ baseURL: 'https://example.test/v1', model: 'test', apiKey: 'FAKE_KEY_FOR_TEST' });
+    vault.save({ baseURL: 'https://example.test/v1', model: 'deepseek-test', apiKey: 'FAKE_KEY_FOR_TEST' });
     expect(await readFile(path, 'utf8')).not.toContain('FAKE_KEY_FOR_TEST');
     expect(vault.settings().apiKey).toBe('FAKE_KEY_FOR_TEST');
     expect(vault.view()).not.toHaveProperty('apiKey');
@@ -30,17 +30,21 @@ describe('credential boundary (native backend mocked)', () => {
   it('refuses storage when OS encryption is unavailable or plaintext', async () => {
     const { vault } = await setup();
     encryption.available = false;
-    expect(() => vault.save({ baseURL: 'https://example.test/v1', model: 'test', apiKey: 'dummy' })).toThrow('安全存储');
+    expect(() => vault.save({ baseURL: 'https://example.test/v1', model: 'deepseek-test', apiKey: 'dummy' })).toThrow('安全存储');
     encryption.available = true; encryption.backend = 'basic_text';
     if (process.platform === 'linux') expect(vault.secure()).toBe(false);
   });
   it('does not move the old key to a new API destination', async () => {
     const { vault } = await setup();
-    vault.save({ baseURL: 'https://one.test/v1', model: 'test', apiKey: 'dummy' });
-    expect(() => vault.save({ baseURL: 'https://two.test/v1', model: 'test' })).toThrow('新的 Key');
+    vault.save({ baseURL: 'https://one.test/v1', model: 'deepseek-test', apiKey: 'dummy' });
+    expect(() => vault.save({ baseURL: 'https://two.test/v1', model: 'deepseek-test' })).toThrow('新的 Key');
     expect(vault.settings().baseURL).toBe('https://one.test/v1');
   });
   it('rejects HTTP, embedded credentials, query tokens and fragments', () => {
-    for (const baseURL of ['http://example.test', 'https://u:p@example.test', 'https://example.test?v=key', 'https://example.test/#secret']) expect(() => providerSchema.parse({ baseURL, model: 'test' })).toThrow();
+    for (const baseURL of ['http://example.test', 'https://u:p@example.test', 'https://example.test?v=key', 'https://example.test/#secret']) expect(() => providerSchema.parse({ baseURL, model: 'deepseek-test' })).toThrow();
+  });
+  it('supports DeepSeek IDs and refuses non-DeepSeek model selection', () => {
+    for (const model of ['deepseek-chat', 'deepseek-reasoner', 'deepseek-v4.1-flash']) expect(providerSchema.parse({ baseURL: 'https://example.test/v1', model }).model).toBe(model);
+    expect(() => providerSchema.parse({ baseURL: 'https://example.test/v1', model: 'other-model' })).toThrow('DeepSeek');
   });
 });

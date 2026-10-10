@@ -8,7 +8,7 @@ export const providerSchema = z.object({
     const u = new URL(url);
     return u.protocol === 'https:' && !u.username && !u.password && !u.search && !u.hash;
   }, 'Use an HTTPS API base URL without credentials, query or fragment'),
-  model: z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_.:/-]+$/),
+  model: z.string().trim().min(1).max(120).regex(/^deepseek[-/][a-zA-Z0-9_.:/-]+$/, 'Only DeepSeek model IDs are supported'),
   apiKey: z.string().max(4096).optional()
 }).strict();
 const defaults = { baseURL: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4.1-flash' };

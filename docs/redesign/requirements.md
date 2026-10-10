@@ -2,7 +2,7 @@
 
 ## Confirmed direction
 
-The owner authorized local-first, single-user Electron development for Windows and macOS, a complete UI rebuild, replacement of problematic rigid workflows, and AI SDK model integration. The existing private repository remains the source of truth. The reference process is `kimmywork/skills`; use its increment, worklog and evidence-based verification practices, not a wholesale copy of its shell workflow engine.
+The owner authorized local-first, single-user Electron development for Windows and macOS, a complete UI rebuild, replacement of problematic rigid workflows, and AI SDK model integration. The latest decision narrows the supported model family to DeepSeek, with OpenCode Go as the chosen economical route, and authorizes merge after real Agentic acceptance. The existing private repository remains the source of truth. The reference process is `kimmywork/skills`; use its increment, worklog and evidence-based verification practices, not a wholesale copy of its shell workflow engine.
 
 ## Scope and assumptions
 

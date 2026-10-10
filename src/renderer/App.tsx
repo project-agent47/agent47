@@ -167,16 +167,16 @@ function Settings({ connection, busy, run }: { connection?: ProviderView; busy: 
   const [key, setKey] = useState('');
   const [result, setResult] = useState('');
   const [saved, setSaved] = useState(false);
-  return <div className="standard-page settings-page page-enter"><div className="page-eyebrow">你的模型，你的选择</div><h1>连接设置</h1><p className="page-description">通过 AI SDK 的 OpenAI-compatible provider 接入模型。密钥只在桌面主进程使用，不返回给页面。</p>
+  return <div className="standard-page settings-page page-enter"><div className="page-eyebrow">DeepSeek，专注一个模型系列</div><h1>连接设置</h1><p className="page-description">通过 AI SDK 接入 DeepSeek 的兼容 Chat Completion API。密钥只在桌面主进程使用，不返回给页面。</p>
     {bridge.preview && <div className="boundary-note"><LockKeyhole size={20} /><div><strong>这是预览，不是凭据入口</strong><p>下面展示桌面应用的配置方式。预览禁止输入或保存真实 Key，连接测试也不会发送网络请求。</p></div></div>}
     <form className="settings-card" onSubmit={e => { e.preventDefault(); void run(async () => { await bridge.saveProvider({ baseURL: url, model, apiKey: key || undefined }); setKey(''); setSaved(true); }); }}>
-      <div className="settings-card-heading"><span className="provider-mark"><Cable size={23} /></span><div><h2>OpenAI-compatible</h2><p>{connection?.configured ? '已配置连接' : '等待配置'}</p></div><span className="badge">AI SDK</span></div>
+      <div className="settings-card-heading"><span className="provider-mark"><Cable size={23} /></span><div><h2>DeepSeek</h2><p>{connection?.configured ? '已配置连接' : '等待配置'}</p></div><span className="badge">AI SDK</span></div>
       <label className="field-label">API Base URL<input required type="url" value={url} onChange={e => { setUrl(e.target.value); setSaved(false); }} disabled={bridge.preview} /></label><p className="field-help">填 API 基础地址，不包含 /chat/completions；仅接受 HTTPS。</p>
       <label className="field-label">Model ID<input required value={model} onChange={e => { setModel(e.target.value); setSaved(false); }} disabled={bridge.preview} /></label>
       <label className="field-label">API Key<input type="password" autoComplete="off" value={key} onChange={e => setKey(e.target.value)} placeholder={bridge.preview ? '预览不接收真实凭据' : connection?.configured ? '留空保留当前密钥' : '输入你的 API Key'} disabled={bridge.preview} /></label>
       <div className="storage-note"><ShieldCheck size={15} /><span>{bridge.preview ? 'Windows / macOS 桌面版使用系统安全存储。' : connection?.secureStorage ? '系统安全存储可用，密钥将加密保存。' : '系统安全存储不可用，禁止保存 Key。可用启动环境变量。'}</span></div>
       <div className="settings-actions"><button className="secondary" type="button" disabled={busy} onClick={() => void run(async () => { setResult(await bridge.testProvider()); })}>{busy ? <LoaderCircle size={16} className="spin" /> : <Activity size={16} />}测试连接</button><button className="primary" type="submit" disabled={busy || bridge.preview || !connection?.secureStorage}><Check size={16} />保存连接</button></div>
       {saved && <div className="inline-success" role="status">连接已保存，密钥未返回给页面。</div>}{result && <div className="test-result" role="status">{result}</div>}
-    </form><div className="settings-footnote"><strong>使用范围说明</strong><p>OpenCode Go 连接需要稳定的会话标识，本应用按任务提供。其订阅面向 coding-agent 使用；通用管家任务的长期服务与计费方案需另外确认，不应默认复用编码套餐覆盖所有流量。</p></div>
+    </form><div className="settings-footnote"><strong>DeepSeek 接入说明</strong><p>这一版只支持 DeepSeek 模型系列，可配置你选择的兼容 API 地址。默认使用 OpenCode Go 的 DeepSeek 路由，并按任务发送稳定会话标识；没有自动切换到其他模型的 fallback。</p></div>
   </div>;
 }

@@ -10,7 +10,7 @@ React renderer
             ├─ CredentialStore → OS safeStorage ciphertext, main process only
             └─ TaskRuntime
                  ├─ TaskStore → SQLite WAL checkpoints
-                 ├─ sdkDriver → AI SDK generateText + compatible provider
+                 ├─ sdkDriver → AI SDK ToolLoopAgent + compatible DeepSeek provider
                  └─ broker
                       ├─ listFiles / readFile (selected root only)
                       └─ writeArtifact (intent → exact-content approval → atomic publication)
@@ -32,7 +32,9 @@ queued → running → completed
             └─ stop → cancelled (terminal)
 ```
 
-A model step contains no SDK `execute` callbacks. The runtime owns tool execution, checkpoints the assistant response plus pending calls before any side effect, and appends tool-result messages itself. AI SDK owns protocol serialization and response parsing; the application does not hand-write Chat Completion HTTP integration.
+A model step uses `ToolLoopAgent` with `stopWhen: isStepCount(1)` and no SDK `execute` callbacks. The durable task host owns actual tool execution, checkpoints the assistant response plus pending calls before any side effect, and appends tool-result messages itself. AI SDK owns the standard Agent call surface, model protocol and response parsing; the application does not hand-write Chat Completion HTTP integration.
+
+This is deliberately not a claim that a single in-memory SDK loop supplies process-crash recovery. `TaskRuntime` drives multiple checkpointed Agent steps. Keeping that host is a persistence/security decision, not absence of an implemented Agent loop. See the framework decision for alternatives.
 
 Every model request is bounded by 90 seconds, one SDK retry and 4096 output tokens. Tasks have a 12-step model budget. A single serial worker executes ready tasks; pending approval releases the worker so other tasks can proceed. These are deliberate minimal semantics, not general multi-agent orchestration.
 
@@ -60,7 +62,7 @@ Symlinks, traversal, absolute paths, Windows alternate stream syntax and common 
 
 ## Credentials
 
-The development test uses the owner's approved opaque Vault handle; it is not exported into the repository or desktop package. Installed apps use a user-entered API key encrypted through Electron `safeStorage`, or an explicitly supplied startup environment variable. The API key is not returned by any IPC metadata method.
+The development test uses the owner's approved opaque Vault handle; it is not exported into the repository or desktop package. Installed apps use a user-entered API key encrypted through Electron `safeStorage`, an explicitly supplied startup environment variable, or the explicitly opted-in authenticated proxy for the default DeepSeek route. The API key and proxy auth material are not returned by any IPC metadata method.
 
 When OS encryption is unavailable, especially Linux's `basic_text` backend, saving is refused. Provider JSON stores metadata and ciphertext only. SQLite contains task history and selected-file excerpts; it is not encrypted, so OS account/disk security still matters. Files use owner-only modes where supported.
 
