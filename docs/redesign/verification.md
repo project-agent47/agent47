@@ -1,5 +1,7 @@
 # First increment verification record
 
+Historical baseline and framework follow-up. Current tools/skills increment evidence and boundaries are in `conversation-tools-skills.md`; old capability exclusions below describe their original verification dates.
+
 ## Scope and verdict
 
 Conditional pass for a development increment on the Linux host, not a production or Windows/macOS release certification. The author performed this review; it is not an independent external security audit.
@@ -65,3 +67,11 @@ Real Electron acceptance completed at `2026-10-10T09:21:10.584Z` using `deepseek
 Artifact SHA-256: `f4a2f7d4cde44324f5eaa2bee78360ba49e44af1a294a301e07674fbb2de2f4f`. Reproduction and test limitations are in `deepseek-desktop-e2e.md`.
 
 Final regression: clean `npm ci`, type check/production build, lint, 27 unit tests, three preview scenarios, 42 contrast pairs with minimum 4.70:1, negative token-drift check, zero full dependency-audit findings, and Electron isolation fixture smoke all passed. Intentional user cancellation no longer emits a model-failure diagnostic; diagnostic metadata never contains raw response bodies, headers or credentials.
+
+## Tools/skills follow-up: 2026-10-10
+
+Clean installation, production build/type check, lint, 42 unit tests, four preview scenarios, contrast/token-drift checks, full audit with zero findings and Electron isolation fixture smoke passed. Real DeepSeek capability acceptance completed at `2026-10-10T11:15:05.952Z`; original real-desktop regression completed at `2026-10-10T11:15:25.468Z`. The latter artifact hash is `26fd729333f3c2c61162012ac006b36021ef975895b35cda4c2d9af7271be521`.
+
+The latest short Markdown response yielded 16 text and 7 reasoning deltas, 1671 input and 107 output tokens; its reasoning draft was observed, while text completed before the poll observed a draft. An earlier longer acceptance at 11:09 observed both live text and reasoning drafts. Do not equate display pacing or a proxy-batched short reply with a guaranteed token-by-token network latency result.
+
+Actual skills/reference/project edit and approval restart, bundled Node JavaScript, OS Shell, clarification and random-marker automatic compaction passed without model/tool/IPC/store mocks. Details and remaining host privilege, context projection and native-platform gates are in `conversation-tools-skills.md`.

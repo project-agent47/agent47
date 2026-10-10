@@ -5,7 +5,11 @@ import type { ModelMessage } from 'ai';
 import type { TaskView } from '../shared/contracts';
 
 export interface ToolCall { toolCallId: string; toolName: string; input: unknown }
-export interface TaskRecord extends TaskView { messages: ModelMessage[]; pending: ToolCall[] }
+export interface TaskRecord extends TaskView {
+  messages: ModelMessage[]; pending: ToolCall[];
+  compactions?: { summary: string; keptFrom: number; at: string }[];
+  effectStarted?: string; loadedSkills?: string[];
+}
 
 /** One process owns this database. Every checkpoint includes messages and action state. */
 export class TaskStore {
@@ -18,7 +22,7 @@ export class TaskStore {
     chmodSync(path, 0o600);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     for (const sidecar of [`${path}-wal`, `${path}-shm`]) if (existsSync(sidecar)) chmodSync(sidecar, 0o600);
-    this.db.exec('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);');
+    this.db.exec('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, task_id TEXT NOT NULL);');
     const version = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('schema');
     if (version && version.value !== '1') throw new Error('Unsupported database schema. Preserve database and upgrade the app.');
     this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?,?)').run('schema', '1');
@@ -43,12 +47,27 @@ export class TaskStore {
     task.updatedAt = new Date().toISOString();
     this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify(task));
   }
+  command(id: string): string | undefined { return this.db.prepare('SELECT task_id FROM commands WHERE id=?').get(id)?.task_id as string | undefined; }
+  saveCommand(id: string, task: TaskRecord): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try { this.save(task); this.db.prepare('INSERT INTO commands VALUES (?,?)').run(id, task.id); this.db.exec('COMMIT'); }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+  saveContinuation(id: string, task: TaskRecord): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try { this.save(task); this.db.prepare('UPDATE commands SET task_id=? WHERE id=?').run(task.id, id); this.db.exec('COMMIT'); }
+    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
   close(): void { this.db.close(); }
 }
 export function publicTask(task: TaskRecord): TaskView {
   return {
     id: task.id, goal: task.goal, skill: task.skill, root: task.root, status: task.status,
     createdAt: task.createdAt, updatedAt: task.updatedAt, events: task.events,
-    artifacts: task.artifacts, approval: task.approval, steps: task.steps
+    artifacts: task.artifacts, approval: task.approval, steps: task.steps,
+    conversationId: task.conversationId ?? task.id, goalId: task.goalId ?? task.id,
+    parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
+    usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
+    context: task.context, unknownEffect: Boolean(task.effectStarted)
   };
 }

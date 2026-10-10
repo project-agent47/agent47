@@ -53,6 +53,21 @@ const previewBridge: AgentBridge = {
     task.status = 'cancelled';
     task.events.push({ id: crypto.randomUUID(), at: now, kind: 'system', text: '示例任务已停止。' }); emit();
   },
+  sendMessage: async input => {
+    const parent = samples.find(t => t.id === input.taskId)!;
+    const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
+      status: 'completed', approval: undefined, artifacts: [], steps: 1, usage: [], events: [...parent.events,
+        { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text },
+        { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '## 继续讨论\n\n这是**多轮交互示例**，没有调用模型。\n\n| 能力 | 状态 |\n|---|---|\n| Markdown | 示例渲染 |\n| 工具 | 不执行 |' }] };
+    samples.unshift(task); emit(); return clone(task);
+  },
+  resolveUnknown: async () => {},
+  listSkills: async () => [],
+  previewSkill: async () => { throw new Error('预览不读取本机 skill 包，请在桌面应用中导入。'); },
+  installSkill: async () => { throw new Error('预览不安装 skill。'); },
+  setSkill: async () => {},
+  executionSettings: async () => ({ hostExecution: false }),
+  setExecutionSettings: async () => { throw new Error('预览不启用本机执行。'); },
   decide: async input => {
     const task = samples.find(t => t.id === input.taskId)!;
     if (!task.approval || task.approval.state !== 'pending') throw new Error('此审批已结束。');

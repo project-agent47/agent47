@@ -36,7 +36,7 @@ A model step uses `ToolLoopAgent` with `stopWhen: isStepCount(1)` and no SDK `ex
 
 This is deliberately not a claim that a single in-memory SDK loop supplies process-crash recovery. `TaskRuntime` drives multiple checkpointed Agent steps. Keeping that host is a persistence/security decision, not absence of an implemented Agent loop. See the framework decision for alternatives.
 
-Every model request is bounded by 90 seconds, one SDK retry and 4096 output tokens. Tasks have a 12-step model budget. A single serial worker executes ready tasks; pending approval releases the worker so other tasks can proceed. These are deliberate minimal semantics, not general multi-agent orchestration.
+Every model request is bounded by 90 seconds, no automatic SDK retry and 4096 output tokens (2048 for compression). Runs have a 12-step model-loop safety cap and at most three compaction requests; these are runaway-loop safeguards, not token/monetary budget products. A single serial worker executes ready tasks; pending approval and input release the worker so other tasks can proceed.
 
 On startup only interrupted `running` tasks become queued. Pending approval stays pending. Approved artifact intent replays against a deterministic path, checking the existing content hash rather than creating a second file. Model requests interrupted before a durable checkpoint can be reissued and billed again; exactly-once model billing is not claimed.
 
@@ -78,4 +78,4 @@ A saved credential cannot silently follow an endpoint change: changing the base 
 
 ## Deferred platform work
 
-Move long-running runtime work into a utility/worker process before wider coordination. Add encrypted secret references, versioned skill loading, approved-browser actions, OS-specific automation, durable triggers and worker leases as separately verifiable increments. Electron is the desktop shell, not the automation or coordination engine.
+Host JavaScript and Shell now execute in a separate Electron utility process with an environment allowlist and exact-content approval; it is not an OS sandbox. The durable runtime still lives in main. The current skill, multi-run, streaming, usage and compaction contracts are documented in `conversation-tools-skills.md`. Approved-browser actions, OS-specific automation, durable triggers and distributed worker leases remain separate increments.

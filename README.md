@@ -24,6 +24,7 @@ npm test
 npm run smoke:model  # real coding-agent API test; needs an approved key/transport
 npm run smoke:electron
 npm run test:desktop:live # real DeepSeek desktop acceptance, approved proxy required
+npm run test:capabilities:live # real streaming, skills, edits, Node/Shell and compaction
 ```
 
 The Electron smoke script uses a deterministic model fixture and a temporary user-data directory. On a headless Linux CI host use `xvfb-run -a npm run smoke:electron`; that harness passes `--no-sandbox` only for the host test. Production app configuration keeps renderer sandboxing enabled.
@@ -31,12 +32,16 @@ The Electron smoke script uses a deterministic model fixture and a temporary use
 ## What is implemented
 
 - Rebuilt task center, conversation, exact-content approval, artifact library, capability disclosure and settings.
-- AI SDK `ToolLoopAgent` and compatible-provider integration with task-stable session headers.
-- Bounded selected-folder text tools and human-approved app-owned artifact creation.
+- AI SDK `ToolLoopAgent.stream()`, separate provider reasoning, safe GFM Markdown and supplier input/output/cache usage (no billing or price estimates).
+- Multi-run conversations, essential-input questions, durable steering/follow-up queues and immutable finished runs.
+- Bounded selected-folder reads, approved project creation/editing with original hashes, and app-owned artifact creation.
+- Reviewed `SKILL.md` text-bundle import, explicit enable/disable, metadata catalog and on-demand instructions/references/scripts. No automatic install or script execution.
+- Optional approved host Shell and JavaScript using Electron's bundled Node utility process. **Not an OS security sandbox**; disabled by default, every exact command/code requires approval, no application secret/proxy environment is inherited.
+- Automatic context summaries at safe closed-turn boundaries; full raw history remains stored and summary calls appear in token usage.
 - SQLite task/message/action checkpoints, serial queue, restart recovery and cancellation.
 - Isolated renderer/preload/main architecture; no unauthenticated HTTP API.
 
-No Shell/browser/desktop automation, scheduler, MCP, arbitrary skill import or multi-agent execution yet. Do not mistake the preview fixture for external execution.
+No browser/desktop automation, scheduler, MCP, multi-agent coordination, OS tool sandbox, package marketplace or binary skill assets yet. No billing/price/monetary-budget feature is in scope. Do not mistake the preview fixture for external execution.
 
 ## Packaging
 
@@ -55,6 +60,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Verification record and release gates](docs/redesign/verification.md)
 - [Agent framework decision](docs/redesign/agent-framework-decision.md)
 - [Real DeepSeek desktop E2E](docs/redesign/deepseek-desktop-e2e.md)
+- [Conversation, tools, skills and context increment](docs/redesign/conversation-tools-skills.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

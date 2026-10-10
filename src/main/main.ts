@@ -8,10 +8,12 @@ import { TaskStore } from '../core/store';
 import { TaskRuntime } from '../core/runtime';
 import { sdkDriver } from '../core/model';
 import { artifactPath, sha256 } from '../core/tools';
-import { readFile, lstat } from 'node:fs/promises';
+import { readFile, lstat, writeFile } from 'node:fs/promises';
 import { CredentialStore } from './vault';
 import type { ModelDriver } from '../core/model';
 import { modelTransport } from './transport';
+import { SkillRegistry } from './skills';
+import { executeHost } from './host';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const single = app.requestSingleInstanceLock();
@@ -58,8 +60,16 @@ async function boot(): Promise<void> {
   const driver = sdkDriver(() => vault.settings(), transport.fetch,
     failure => console.warn('[model-diagnostic] ' + JSON.stringify(failure)));
   const store = new TaskStore(join(root, 'tasks.db'));
-  const changed = () => window?.webContents.send('tasks:changed');
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed);
+  const skills = new SkillRegistry(join(root, 'skills')); await skills.start();
+  let hostExecution = JSON.parse(await readFile(join(root, 'execution.json'), 'utf8').catch(() => 'false')) === true;
+  let changeTimer: ReturnType<typeof setTimeout> | undefined;
+  const changed = () => {
+    if (!changeTimer) {
+      window?.webContents.send('tasks:changed');
+      changeTimer = setTimeout(() => { changeTimer = undefined; window?.webContents.send('tasks:changed'); }, 60);
+    }
+  };
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution });
   protocol.handle('agent47', request => {
     const parsed = new URL(request.url);
     if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });
@@ -79,13 +89,35 @@ async function boot(): Promise<void> {
     return runtime.create(input.goal, input.skill, folder);
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
+  handle('tasks:send', value => {
+    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['steer', 'followup']), clientMessageId: idSchema }).strict().parse(value);
+    return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId);
+  });
+  handle('tasks:resolve', value => runtime.resolveUnknown(idSchema.parse(value)));
+  handle('skills:list', () => skills.list());
+  handle('skills:preview', async () => {
+    const answer = await dialog.showOpenDialog(window!, { title: '选择含 SKILL.md 的 UTF-8 文本 skill 包；不会自动执行脚本', properties: ['openDirectory'] });
+    if (answer.canceled || !answer.filePaths[0]) return;
+    return skills.preview(await realpath(answer.filePaths[0]));
+  });
+  handle('skills:install', value => skills.install(idSchema.parse(value)));
+  handle('skills:set', value => {
+    const input = z.object({ id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), enabled: z.boolean() }).strict().parse(value);
+    return skills.set(input.id, input.enabled);
+  });
+  handle('execution:view', () => ({ hostExecution }));
+  handle('execution:set', async value => {
+    const input = z.object({ hostExecution: z.boolean() }).strict().parse(value);
+    await writeFile(join(root, 'execution.json'), JSON.stringify(input.hostExecution), { mode: 0o600 });
+    hostExecution = input.hostExecution;
+  });
   handle('tasks:decide', value => {
     const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean() }).strict().parse(value);
     runtime.decide(input.taskId, input.approvalId, input.digest, input.approve);
   });
   handle('folder:choose', async () => {
     const answer = await dialog.showOpenDialog(window!, {
-      title: '允许 Agent47 读取此目录内的文本文件（内容会发送给所选模型）',
+      title: '允许读取此目录（内容发送给模型）；修改与主机执行另需逐次审批',
       buttonLabel: '授权读取此目录', properties: ['openDirectory']
     });
     if (answer.canceled || !answer.filePaths[0]) return;
@@ -95,7 +127,7 @@ async function boot(): Promise<void> {
   });
   handle('provider:view', providerView);
   handle('provider:save', value => {
-    if (runtime.list().some(t => ['running', 'queued', 'awaiting_approval'].includes(t.status))) throw new Error('请先停止或完成未结束的任务，再更改模型连接。');
+    if (runtime.list().some(t => !['completed', 'failed', 'cancelled'].includes(t.status))) throw new Error('请先停止或完成未结束的任务，再更改模型连接。');
     vault.save(value as Parameters<CredentialStore['save']>[0]);
   });
   handle('provider:test', async () => {

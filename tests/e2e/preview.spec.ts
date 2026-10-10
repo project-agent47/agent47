@@ -85,3 +85,23 @@ test('denial, capabilities, preview-safe settings and narrow layout', async ({ p
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: '.qa/settings-mobile.png', fullPage: true, animations: 'disabled' });
 });
+test('multi-turn composer renders Markdown and skill management stays preview-safe', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.task-row').nth(1).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('把这些区别整理成 Markdown 表格');
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(page.locator('.task-title h1')).toHaveText('把这些区别整理成 Markdown 表格');
+  await expect(page.getByText('第 2 轮', { exact: true })).toBeVisible();
+  await expect(page.locator('.message.assistant table')).toBeVisible();
+  await page.screenshot({ path: '.qa/conversation-light.png', animations: 'disabled' });
+  await page.getByLabel('切换深色模式').click();
+  await page.screenshot({ path: '.qa/conversation-dark.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: '.qa/conversation-mobile.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: '能力与边界', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Skills 扩展包', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '我理解风险，启用本机 Shell / JavaScript', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: '选择 Skill 包', exact: true }).click();
+  await expect(page.getByText('预览不读取本机 skill 包，请在桌面应用中导入。')).toBeVisible();
+});

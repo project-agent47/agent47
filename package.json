@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Local-first desktop task agent",
   "main": "dist/main/main.cjs",
-  "engines": { "node": ">=22.12" },
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
@@ -19,6 +21,7 @@
     "smoke:model": "tsx scripts/smoke-model.ts",
     "smoke:electron": "node scripts/smoke-electron.mjs",
     "test:desktop:live": "node scripts/e2e-desktop-live.mjs",
+    "test:capabilities:live": "node scripts/e2e-capabilities-live.mjs",
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac"
   },
@@ -30,7 +33,10 @@
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "undici": "^7.0.0",
+    "yaml": "^2.9.1",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -58,10 +64,25 @@
   "build": {
     "appId": "dev.agent47.desktop",
     "productName": "Agent47",
-    "files": ["dist/**/*", "package.json"],
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
     "asar": true,
-    "directories": { "output": "release" },
-    "win": { "target": ["nsis"], "artifactName": "${productName}-${version}-${arch}.${ext}" },
-    "mac": { "target": ["dmg"], "category": "public.app-category.productivity" }
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.productivity"
+    }
   }
 }
