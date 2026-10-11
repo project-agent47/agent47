@@ -44,14 +44,16 @@ try {
   }, { taskId: first.id, id: originalID });
   if (!rejected || (await tasks()).length !== 1) throw new Error('Stale source was silently sent');
   await page.getByLabel('更新引用：notes.md').click();
+  await expect.poll(async () => { const m = (await tasks())[0]?.materials?.find(m => m.name === 'notes.md'); return !!m && m.id !== originalID && m.sha256 !== originalHash; }).toBe(true);
   const refreshed = (await tasks())[0].materials[0];
   if (refreshed.id === originalID || refreshed.sha256 === originalHash) throw new Error('Refresh replaced version identity');
   await page.getByLabel('继续对话', { exact: true }).fill('请用 readMaterial 只读取这条消息引用的新版 notes.md，返回其中新的 EVIDENCE 标记；不要沿用旧版本标记。');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
-  await expect.poll(async () => (await tasks())[0]?.status, { timeout: 180000 }).toBe('completed');
+  await expect.poll(async () => { const t = (await tasks())[0]; return t?.id !== first.id ? t?.status : undefined; }, { timeout: 180000 }).toBe('completed');
   const second = (await tasks())[0];
   if (second.id === first.id || second.conversationTitle !== stableTitle || second.runNumber !== 2) throw new Error('Conversation identity/title changed');
   if (live && !second.events.filter(e => e.kind === 'assistant').at(-1)?.text.includes(updated)) throw new Error('Updated material was not read');
+  await expect(page.getByLabel('执行轮次', { exact: true })).toHaveValue(second.id);
   if (!live) {
     await app.evaluate(({ app }, input) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite'), { join } = process.getBuiltinModule('node:path');
@@ -77,6 +79,7 @@ try {
   await expect(page.getByLabel('继续对话', { exact: true })).toBeVisible();
   await page.locator('.message.assistant').last().scrollIntoViewIfNeeded();
   await page.screenshot({ path: `.qa/materials-${live ? 'live' : 'native'}.png` });
+  await expect.poll(() => page.evaluate(() => window.agent47.lastRun())).toBe(second.id);
   const runCount = (await tasks()).length, usageBefore = JSON.stringify((await tasks()).map(t => t.usage));
   await app.close(); app = undefined;
   await unlink(file); await launch();
