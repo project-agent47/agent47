@@ -23,9 +23,14 @@ try {
   const evidence = await app.evaluate(({ app }) => {
     const { DatabaseSync } = process.getBuiltinModule('node:sqlite'), { join } = process.getBuiltinModule('node:path');
     const db = new DatabaseSync(join(app.getPath('userData'), 'tasks.db')); const t = JSON.parse(db.prepare('SELECT body FROM tasks ORDER BY rowid DESC LIMIT 1').get().body); db.close();
-    return t.messages.filter(m => m.role === 'tool').flatMap(m => m.content).filter(m => m.toolName === 'browserRead').map(m => m.output?.value).find(v => v?.content?.includes('minimal agent harness'));
+    return t.messages.filter(m => m.role === 'tool').flatMap(m => m.content).filter(m => m.toolName === 'browserRead').map(m => m.output?.value).findLast(v => v?.content?.trim());
   });
-  if (!evidence?.content?.includes('minimal agent harness') || evidence.url !== 'https://pi.dev/') throw new Error('Actual Pi DOM did not reach model');
+  const actualDOM = await app.evaluate(async ({ BrowserWindow }) => {
+    const view = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL() === 'https://pi.dev/');
+    return view?.webContents.executeJavaScript('document.body.innerText');
+  });
+  const normalize = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!evidence?.content?.trim() || evidence.url !== 'https://pi.dev/' || !actualDOM || !normalize(actualDOM).includes(normalize(evidence.content).slice(0, 80))) throw new Error('Actual Pi DOM did not reach model');
   await page.screenshot({ path: '.qa/agent-browser-public-conversation.png' });
   await writeFile('.qa/agent-browser-public-results.json', JSON.stringify({ result: 'REAL_PUBLIC_DEEPSEEK_BROWSER_OK', modelFixture: false, webFixture: false, ipcFixture: false, intentInjection: false, url: evidence.url, steps: task.steps, usage: task.usage, platform: process.platform, verifiedAt: new Date().toISOString() }, null, 2));
   console.log('REAL_PUBLIC_DEEPSEEK_BROWSER_OK steps=' + task.steps);

@@ -119,7 +119,8 @@ export class Workspace {
     if (signal.aborted || current.grant.generation !== generation || current.wc !== wc || wc.getURL() !== url) throw new Error('请重新读取：网页或授权已变化。');
     const snapshot = { id: randomUUID(), conversationId: this.conversation(taskId), url, wcId: wc.id, at: Date.now(), elements: controls.elements };
     this.browserSnapshots.set(tabId, snapshot);
-    return { tabId, snapshotId: snapshot.id, url, title: body.title, content: body.content.slice(0, 4000), truncated: body.truncated || body.content.length > 4000, elements: controls.elements, elementsTruncated, untrusted: true, valuesIncluded: false };
+    return { tabId, snapshotId: snapshot.id, url, title: body.title, content: body.content.slice(0, 4000), truncated: body.truncated || body.content.length > 4000, elements: controls.elements, elementsTruncated,
+      coverage: 'Partial currently-rendered main-document text; excludes hidden, lazy, frame and shadow content. Not proof of complete page.', untrusted: true, valuesIncluded: false };
   }
   private browserBinding(taskId: string, input: unknown) {
     const raw = z.record(z.string(), z.unknown()).parse(input);

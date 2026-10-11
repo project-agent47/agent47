@@ -34,6 +34,8 @@
 
 正文复用固定 isolated-world 的只读提取程序，主文档最多返回 4000 字符。排除 form/input/textarea/select/contenteditable、脚本、iframe 与常见隐藏节点，不直接读取 Cookie、storage 或表单值；正文仍可能有私人信息，授权意味着允许将这些可见证据发送给外部 DeepSeek。
 
+每次读取都明确标记为 partial coverage，不截断也不代表页面完整。隐藏／延迟展示内容可能尚未出现；模型不应根据短摘录断言整页没有更多信息，应在需要时滚动／再读取，或说明观察范围。公网验收核对实际 URL、工具返回正文与原生 DOM，而非绑定某一句会变化或尚未显示的网站文案。
+
 控制项最多 60 个，元素集合序列化最多 12000 字符，返回 ref、tag、role、名称、type、href、disabled/readOnly。输入框名称来自标签/aria-label/placeholder，不读取值；password/file/hidden 控件不列出。有截断标记，不冒充完整无障碍树或完整视觉状态，也不包含 Shadow DOM、canvas、iframe 内容。
 
 正文、标签和链接 URL 仍可能携带私人信息或查询参数；排除密码控件值不等于能够自动识别所有秘密。授权区明确提示这些信息会进入 DeepSeek，用户不应授权包含敏感内容的页面。
