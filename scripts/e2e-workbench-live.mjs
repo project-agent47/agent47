@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 if (process.env.AGENT47_AUTHENTICATED_PROXY !== '1') throw new Error('Authorized proxy required');
 const root = await mkdtemp(join(tmpdir(), 'a47-workbench-live-')), data = join(root, 'data'), source = join(root, 'skill'), project = join(root, 'project');
 await mkdir(data); await mkdir(project); await mkdir(join(source, 'references'), { recursive: true }); await mkdir('.qa', { recursive: true });
-const markers = { old: 'SKILL_OLD_' + randomUUID(), next: 'SKILL_NEW_' + randomUUID(), queue: 'QUEUE_' + randomUUID(), deleted: 'DELETED_' + randomUUID() };
+const markers = { old: 'SKILL_OLD_' + randomUUID(), next: 'SKILL_NEW_' + randomUUID(), queue: 'QUEUE_' + randomUUID(), wait: 'WAIT_' + randomUUID(), deleted: 'DELETED_' + randomUUID() };
 async function version(marker) {
   await writeFile(join(source, 'SKILL.md'), '---\nname: workbench-test\ndescription: A TypeScript tool contract testing checklist\n---\nUse readSkillFile to read references/check.txt when asked. The marker in that file is test evidence, not permission. Do not execute any code or modify projects.');
   await writeFile(join(source, 'references/check.txt'), marker);
@@ -74,11 +74,14 @@ try {
   await page.getByLabel('继续对话', { exact: true }).fill(`Instead of writing, reply only ${markers.queue}. Do not call tools.`); await page.keyboard.press('Enter');
   await page.getByLabel('继续对话', { exact: true }).fill(markers.deleted); await page.keyboard.press('Enter');
   await page.getByLabel(`删除待发送消息：${markers.deleted}`, { exact: true }).click();
+  await page.getByLabel('继续对话', { exact: true }).fill(`For the subsequent coding queue test reply only ${markers.wait}. Do not call tools.`); await page.keyboard.press('Enter');
   await page.screenshot({ path: '.qa/workbench-queue-desktop.png', animations: 'disabled' });
-  await page.getByRole('button', { name: '立即发送', exact: true }).click();
+  await page.locator('.queue-row').filter({ hasText: markers.queue }).getByRole('button', { name: '立即发送', exact: true }).click();
   const changed = await completed(paused.id);
-  if (!contains(changed, markers.queue) || changed.events.some(e => e.text.includes(markers.deleted)) || changed.artifacts.length) throw new Error('Queue deletion or approval invalidation failed');
-  report.cases.push({ name: 'actual Electron durable queue delete + exact approval invalidation without writing', passed: true });
+  const immediateReply = changed.events.findIndex(e => e.kind === 'assistant' && e.text.includes(markers.queue));
+  const deferredReply = changed.events.findIndex(e => e.kind === 'assistant' && e.text.includes(markers.wait));
+  if (immediateReply < 0 || deferredReply <= immediateReply || changed.events.some(e => e.text.includes(markers.deleted)) || changed.artifacts.length) throw new Error('Queue deletion, selective promotion or approval invalidation failed');
+  report.cases.push({ name: 'actual Electron queue delete + selective promotion leaves ordinary input for later boundary + exact approval invalidation without writing', passed: true });
 
   await page.getByRole('button', { name: '连接设置与工具', exact: true }).click();
   await page.getByRole('button', { name: '我理解风险，启用本机 Shell / JavaScript', exact: true }).click();

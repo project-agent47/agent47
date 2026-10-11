@@ -56,6 +56,20 @@ it('immediate queue promotion aborts only the current model, records unknown usa
   expect(aborted).toBe(true); expect(observed).toContain('new direction');
   expect(store.get(task.id).usage?.[0].state).toBe('unknown'); expect(runtime.list()).toHaveLength(1);
 });
+it('promoting one message does not immediately flush other messages before the next tool boundary', async () => {
+  let entered = false, count = 0, second = '', third = '';
+  const { runtime } = await setup(async (messages, _id, signal) => {
+    if (++count === 1) { entered = true; await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })); }
+    if (count === 2) { second = JSON.stringify(messages); return call('listFiles', { path: '.' }); }
+    third = JSON.stringify(messages); return answer();
+  });
+  const task = runtime.create('goal', 'general'); await until(() => entered);
+  const immediate = crypto.randomUUID(); runtime.send(task.id, 'IMMEDIATE_ONLY', 'queue', immediate);
+  runtime.send(task.id, 'WAIT_FOR_TOOL', 'queue', crypto.randomUUID()); runtime.manageQueue(task.id, immediate, 'send');
+  await until(() => runtime.list()[0].status === 'completed');
+  expect(second).toContain('IMMEDIATE_ONLY'); expect(second).not.toContain('WAIT_FOR_TOOL');
+  expect(third).toContain('WAIT_FOR_TOOL'); expect(third).toContain('No folder permission');
+});
 it('promotion during host execution never kills or replays the effect; remaining intents are superseded', async () => {
   let release!: () => void, hostAborted = false, executions = 0, count = 0;
   const { runtime, root } = await setup(async () => ++count === 1 ? call('runCode', { code: '1', cwd: '.', timeoutMs: 1000 }) : answer(), {

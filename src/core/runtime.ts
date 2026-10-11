@@ -114,6 +114,7 @@ export class TaskRuntime {
       const child = this.fork(task, item.text);
       // Stopped queues are carried, never silently dispatched on restart.
       child.queuedInput = task.queuedInput!.filter(input => input.id !== messageId);
+      child.queueAfterStep = 1;
       task.queuedInput = []; this.store.saveContinuation(messageId, child, task); this.changed(); this.kick(); return publicTask(child);
     }
     item.mode = 'steer';
@@ -352,12 +353,16 @@ export class TaskRuntime {
       while (!this.stopped && !controller.signal.aborted) {
         task = this.store.get(id);
         if (task.status === 'cancelled') return;
-        const steering = task.queuedInput?.filter(item => item.mode === 'steer' || (item.mode === 'queue' && (!task.pending.length || task.inputBoundary))) ?? [];
+        const hasImmediate = task.queuedInput?.some(item => item.mode === 'steer');
+        const queueBoundary = task.inputBoundary || (!task.pending.length && task.steps >= (task.queueAfterStep ?? 0));
+        const steering = task.queuedInput?.filter(item => hasImmediate ? item.mode === 'steer' : item.mode === 'queue' && queueBoundary) ?? [];
         if (steering.length) {
           while (task.pending.length) this.toolResult(task, task.pending[0], 'User changed requirements; pending intent superseded. Do not execute it.', true);
           if (task.approval?.state === 'pending' || task.approval?.state === 'approved') task.approval.state = 'denied';
           for (const input of steering) { task.messages.push({ role: 'user', content: input.text }); this.event(task, 'user', input.text); }
           task.queuedInput = task.queuedInput?.filter(item => !steering.some(delivered => delivered.id === item.id));
+          // Promoting one message must not promote the rest of the ordinary queue.
+          task.queueAfterStep = hasImmediate ? task.steps + 1 : undefined;
           task.inputBoundary = false; this.save(task);
         }
         if (task.pending.length) {
@@ -485,7 +490,7 @@ export class TaskRuntime {
         catch (error) { if (this.interrupted.delete(id)) continue; throw error; }
         if (controller.signal.aborted || this.stopped) return;
         task = this.store.get(id);
-        if (task.queuedInput?.some(item => item.mode !== 'followup')) continue;
+        if (task.queuedInput?.some(item => item.mode === 'steer' || (item.mode === 'queue' && task.steps >= (task.queueAfterStep ?? 0)))) continue;
         task.inputBoundary = false;
         task.context = { compactions: task.compactions?.length ?? 0, estimatedTokens: estimateTokens(projectedMessages(task)), keptFrom: task.compactions?.at(-1)?.keptFrom ?? 0 };
         let step: ModelStep;

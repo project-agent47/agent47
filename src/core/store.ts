@@ -10,6 +10,7 @@ export interface TaskRecord extends TaskView {
   compactions?: { summary: string; keptFrom: number; at: string }[];
   effectStarted?: string; loadedSkills?: string[];
   inputBoundary?: boolean;
+  queueAfterStep?: number;
 }
 
 /** One process owns this database. Every checkpoint includes messages and action state. */
