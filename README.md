@@ -63,6 +63,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Real DeepSeek desktop E2E](docs/redesign/deepseek-desktop-e2e.md)
 - [Conversation, tools, skills and context increment](docs/redesign/conversation-tools-skills.md)
 - [Simplified permissions, directories and recoverable snapshots](docs/redesign/permissions-and-snapshots.md)
+- [Whole-run file undo and opt-in snapshot retention](docs/redesign/run-undo-and-retention.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUp, ArrowUpRight, ArrowLeft, Plus, Folder, FileText, Inbox, SlidersHorizontal, Layers, Search, Sun, Moon, Check, X, Square, ChevronRight, ShieldCheck, Activity, Cpu, LoaderCircle, Cable, LockKeyhole, PanelRightClose, Download, Circle, CheckCircle2 } from 'lucide-react';
 import { bridge } from './bridge';
-import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView, SkillImport, ExecutionSettings } from '../shared/contracts';
+import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView, SkillImport, ExecutionSettings, SnapshotSettings } from '../shared/contracts';
 import { Markdown } from './Markdown';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
@@ -161,9 +161,14 @@ export function App() {
             {task.draft?.reasoning && <details className="reasoning"><summary>正在接收模型推理…</summary><Markdown>{task.draft.reasoning}</Markdown></details>}
             {task.draft?.text && <article className="message assistant streaming"><div className="message-icon"><Logo small /></div><div className="message-body"><div className="message-author">Agent47 · 流式输出</div><Markdown>{task.draft.text}</Markdown></div></article>}
             {task.context && <div className="context-note">上下文预估 {task.context.estimatedTokens.toLocaleString()}（本地保守估计，非供应商 tokens） · 自动压缩 {task.context.compactions} 次 · 原始历史保留</div>}
-            {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).some(t => t.fileChanges?.length) && <details className="file-changes"><summary>文件改动与恢复点（写入前自动备份）</summary>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).flatMap(owner => [...(owner.fileChanges ?? [])].reverse().map(change => <div className="snapshot-row" key={`${owner.id}-${change.id}`}><span>{change.path}<small>第 {owner.runNumber ?? 1} 轮 · {change.state === 'restored' ? '已恢复' : '可恢复'}</small></span><button className="secondary small-button" disabled={busy || change.state === 'restored' || !['completed', 'failed', 'cancelled'].includes(task.status)} onClick={() => {
+            {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).some(t => t.fileChanges?.length) && <details className="file-changes"><summary>文件改动与恢复点（写入前自动备份）</summary>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).flatMap(owner => [...(owner.fileChanges ?? [])].reverse().map(change => <div className="snapshot-row" key={`${owner.id}-${change.id}`}><span>{change.path}<small>第 {owner.runNumber ?? 1} 轮 · {change.state === 'restored' ? '已恢复' : change.state === 'cleaned' ? '备份已清理，不能恢复' : '可恢复'}</small></span><button className="secondary small-button" disabled={busy || change.state !== 'saved' || !['completed', 'failed', 'cancelled'].includes(task.status)} onClick={() => {
               if (window.confirm(`恢复 ${change.path} 到此次改动前？新建文件将删除，已有文件恢复原文；外部改动会拒绝覆盖。`)) void run(() => bridge.restoreFile({ taskId: owner.id, snapshotId: change.id }));
-            }}>恢复改动前</button></div>))}<p className="context-note">只覆盖 writeFile / editFile / makeDirectory，不回退聊天、Shell 改动或远端操作。多次修改同一文件请从最近一次恢复。</p></details>}
+            }}>恢复改动前</button></div>))}<p className="context-note">只覆盖 writeFile / editFile / makeDirectory，不回退聊天、Shell 改动或远端操作。多次修改同一文件请从最近一次恢复。</p>
+              {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id) && t.fileChanges?.some(change => change.state === 'saved')).map(owner => <button className="secondary" disabled={busy || !['completed', 'failed', 'cancelled'].includes(task.status)} key={owner.id} onClick={() => {
+                if (window.confirm(`撤销第 ${owner.runNumber ?? 1} 轮在 ${owner.root} 的 ${owner.fileChanges!.filter(change => change.state === 'saved').length} 项文件工具改动？按倒序恢复，冲突项及其旧版本保留；不是原子事务，不撤销 Shell/远端效果。`)) void run(() => bridge.undoRun(owner.id));
+              }}>撤销第 {owner.runNumber ?? 1} 轮文件改动</button>)}
+              {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id) && t.undo).map(owner => <div className="context-note" role="status" key={owner.id}>第 {owner.runNumber ?? 1} 轮撤销：{owner.undo!.state === 'running' ? '进行中' : owner.undo!.state === 'completed' ? '已完成' : '部分恢复 / 需要检查'} · 恢复 {owner.undo!.restored} 项 · 冲突 {owner.undo!.conflicts.length} 项{owner.undo!.conflicts.map(conflict => <p key={conflict.path}>{conflict.path}：{conflict.error}</p>)}</div>)}
+            </details>}
             {(task.status === 'running' || task.status === 'queued') && <div className="working-state" role="status"><LoaderCircle size={16} className="spin" />{task.status === 'queued' ? '已进入本地队列，等待执行…' : '正在推进任务，进展会保存在本地…'}</div>}
             {task.status === 'awaiting_approval' && task.approval && <section className="approval-card">
               <div className="approval-top"><span className="approval-icon"><ShieldCheck size={21} /></span><div><div className="eyebrow">需要你的确认</div><h2>{task.approval.kind === 'project_write' ? '修改项目文件' : task.approval.kind ? '执行本机工具' : '创建一份成果文件'}</h2></div><span className="badge">一次性授权</span></div>
@@ -223,6 +228,26 @@ function ToolSettings({ settings, busy, run }: { settings: ExecutionSettings; bu
         void run(() => bridge.setExecutionSettings({ hostExecution: !settings.hostExecution }));
       }}>{settings.hostExecution ? '关闭本机 Shell / JavaScript' : '我理解风险，启用本机 Shell / JavaScript'}</button></div>
     <p className="context-note">使用 Electron 自带 Node，不另装运行时。停止不是回滚；关闭本机执行会撤销已保存的免确认授权。</p>
+    <SnapshotControls busy={busy} run={run} />
+  </section>;
+}
+function SnapshotControls({ busy, run }: { busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void> }) {
+  const [settings, setSettings] = useState<SnapshotSettings>();
+  const [result, setResult] = useState('');
+  useEffect(() => { void bridge.snapshotSettings().then(setSettings).catch(() => setResult('无法读取快照统计。')); }, []);
+  const refresh = async () => setSettings(await bridge.snapshotSettings());
+  return <section className="snapshot-controls"><h3>快照保留与清理</h3><p>默认保留全部。清理只删除旧的、已结束项目任务的备份原文；不删除项目文件、成果或聊天。活动、结果未知、正在恢复的快照不会清理，少量审计元数据会保留。</p>
+    <label>保留策略<select aria-label="快照保留策略" disabled={busy || !settings} value={settings?.retentionDays ?? 0} onChange={e => {
+      const days = Number(e.target.value) as 0 | 7 | 30 | 90;
+      if (days && !window.confirm(`启用 ${days} 天快照保留策略？${settings?.storagePath} 中，距任务最后活动超过 ${days} 天的已结束任务备份原文会在启动、每日检查或手动清理时永久清除，之后无法恢复这些改动。项目文件和聊天不会删除。`)) return;
+      void run(async () => { await bridge.setSnapshotRetention(days); await refresh(); setResult('保留策略已保存。'); });
+    }}><option value={0}>保留全部（不自动清理）</option><option value={7}>保留 7 天</option><option value={30}>保留 30 天</option><option value={90}>保留 90 天</option></select></label>
+    <p>{settings ? `${settings.count} 份备份 · ${(settings.bytes / 1024).toFixed(1)} KiB（含元数据）` : '正在读取备份统计…'}</p>
+    <p className="context-note snapshot-path">{settings?.storagePath}</p>
+    <button className="secondary" disabled={busy || !settings?.retentionDays} onClick={() => {
+      if (!window.confirm(`按 ${settings?.retentionDays} 天策略永久清除 ${settings?.storagePath} 中的过期备份原文？不会删除项目文件和聊天；备份清除后无法撤销对应改动。`)) return;
+      void run(async () => { const cleaned = await bridge.cleanSnapshots(); await refresh(); setResult(`已清理 ${cleaned.cleaned} 项；${cleaned.errors} 项未清理。`); });
+    }}>清理过期快照</button>{result && <p role="status">{result}</p>}
   </section>;
 }
 

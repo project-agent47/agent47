@@ -7,7 +7,7 @@ import { applyProjectWrite, effectDigest, projectTarget, ensureProjectParents } 
 interface Snapshot {
   id: string; taskId: string; root: string; path: string; digest: string;
   kind: 'project_write' | 'directory'; before?: string; beforeMode?: number;
-  afterHash: string; createdDirectories: string[]; state: 'prepared' | 'applied' | 'restoring' | 'restored';
+  afterHash: string; createdDirectories: string[]; state: 'prepared' | 'applied' | 'restoring' | 'restored' | 'cleaned';
 }
 async function atomicText(path: string, text: string, mode = 0o600): Promise<void> {
   const temp = join(dirname(path), `agent47-${crypto.randomUUID()}.tmp`);
@@ -37,7 +37,7 @@ export class FileSnapshots {
     try { snapshot = JSON.parse(await readFile(file, 'utf8')); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (snapshot) {
-      if (snapshot.digest !== action.digest || snapshot.taskId !== taskId || snapshot.state === 'restoring' || snapshot.state === 'restored') throw new Error('Snapshot replay conflict');
+      if (snapshot.digest !== action.digest || snapshot.taskId !== taskId || ['restoring', 'restored', 'cleaned'].includes(snapshot.state)) throw new Error('Snapshot replay conflict');
     } else {
       const path = String(action.payload?.path);
       const { target, missing } = await projectTarget(action.root, path);
@@ -73,6 +73,7 @@ export class FileSnapshots {
     const file = await this.manifest(taskId, id);
     const snapshot = JSON.parse(await readFile(file, 'utf8')) as Snapshot;
     if (snapshot.taskId !== taskId || snapshot.id !== id) throw new Error('Snapshot not restorable');
+    if (snapshot.state === 'cleaned') throw new Error('Snapshot conflict: backup content was cleaned under the selected retention policy.');
     if (snapshot.state === 'restored') return; // Reconcile a disk commit whose TaskStore acknowledgement was interrupted.
     const { target } = await projectTarget(snapshot.root, snapshot.path);
     if (snapshot.kind === 'project_write') {
@@ -101,5 +102,20 @@ export class FileSnapshots {
       }
     }
     snapshot.state = 'restored'; await atomicText(file, JSON.stringify(snapshot));
+  }
+  async info(taskId: string, id: string): Promise<{ bytes: number; state: Snapshot['state'] }> {
+    const file = await this.manifest(taskId, id);
+    const data = await readFile(file);
+    const snapshot = JSON.parse(data.toString('utf8')) as Snapshot;
+    if (snapshot.taskId !== taskId || snapshot.id !== id) throw new Error('Invalid snapshot');
+    return { bytes: data.length, state: snapshot.state };
+  }
+  async purge(taskId: string, id: string): Promise<void> {
+    const file = await this.manifest(taskId, id);
+    const snapshot = JSON.parse(await readFile(file, 'utf8')) as Snapshot;
+    if (snapshot.taskId !== taskId || snapshot.id !== id || !['applied', 'restored', 'cleaned'].includes(snapshot.state)) throw new Error('Snapshot cleanup refused');
+    // Keep a small durable tombstone to reconcile interrupted DB acknowledgement.
+    snapshot.before = undefined; snapshot.beforeMode = undefined; snapshot.state = 'cleaned';
+    await atomicText(file, JSON.stringify(snapshot));
   }
 }

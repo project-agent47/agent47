@@ -69,6 +69,6 @@ export function publicTask(task: TaskRecord): TaskView {
     parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
     context: task.context, unknownEffect: Boolean(task.effectStarted),
-    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? []
+    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo
   };
 }

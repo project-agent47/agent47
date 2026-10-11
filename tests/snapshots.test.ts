@@ -229,3 +229,91 @@ it('an awaited failed skill read also preserves a concurrent permission change',
   runtime.setPermissions(task.id, 'ask', 'ask'); release(); await until(() => runtime.list()[0].status === 'completed');
   expect(runtime.list()[0].fileMode).toBe('ask');
 });
+it('undoRun restores a complete run in reverse order, including repeated edits', async () => {
+  let step = 0;
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'folder/a.md', content: 'one', expectedHash: null }) :
+    step === 2 ? call('writeFile', { path: 'folder/a.md', content: 'two', expectedHash: sha256('one') }) :
+    step === 3 ? call('writeFile', { path: 'folder/b.md', content: 'b', expectedHash: null }) : answer());
+  const task = runtime.create('batch', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  expect(await runtime.undoRun(task.id)).toMatchObject({ state: 'completed', restored: 3, conflicts: [] });
+  await expect(lstat(join(project, 'folder'))).rejects.toThrow();
+  expect((await runtime.undoRun(task.id)).restored).toBe(0);
+});
+it('batch conflict preserves external text and older versions, while independent files undo', async () => {
+  let step = 0;
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'one', expectedHash: null }) :
+    step === 2 ? call('writeFile', { path: 'a.md', content: 'two', expectedHash: sha256('one') }) :
+    step === 3 ? call('writeFile', { path: 'b.md', content: 'b', expectedHash: null }) : answer());
+  const task = runtime.create('batch', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  await writeFile(join(project, 'a.md'), 'human');
+  expect(await runtime.undoRun(task.id)).toMatchObject({ state: 'partial', restored: 1, conflicts: [{ path: 'a.md' }] });
+  expect(await readFile(join(project, 'a.md'), 'utf8')).toBe('human');
+  await expect(lstat(join(project, 'b.md'))).rejects.toThrow();
+  await writeFile(join(project, 'a.md'), 'two');
+  expect(await runtime.undoRun(task.id)).toMatchObject({ state: 'completed', restored: 2 });
+});
+it('batch retry reconciles disk-committed restores after an interrupted task acknowledgement', async () => {
+  let step = 0;
+  const { runtime, project, snapshots } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'one', expectedHash: null }) : answer());
+  const task = runtime.create('batch', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  await snapshots.restore(task.id, runtime.list()[0].fileChanges![0].id);
+  expect(await runtime.undoRun(task.id)).toMatchObject({ state: 'completed', restored: 1 });
+});
+it('default keep-all and fresh-backup policies never clean backup contents', async () => {
+  let step = 0;
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'one', expectedHash: null }) : answer());
+  runtime.create('save', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  expect((await runtime.cleanSnapshots(0, Date.now() + 365 * 86400_000)).cleaned).toBe(0);
+  expect((await runtime.cleanSnapshots(7)).cleaned).toBe(0);
+  expect((await runtime.snapshotStats()).count).toBe(1);
+});
+it('opt-in expired cleanup removes backup original, not project content or history', async () => {
+  let step = 0;
+  const old = 'ORIGINAL_BACKUP_'.repeat(2000);
+  const { runtime, project, snapshots, store, root } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'new', expectedHash: sha256(old) }) : answer());
+  await writeFile(join(project, 'a.md'), old);
+  const task = runtime.create('save', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  const id = runtime.list()[0].fileChanges![0].id;
+  expect((await runtime.snapshotStats()).bytes).toBeGreaterThan(30000);
+  expect(await runtime.cleanSnapshots(7, Date.now() + 8 * 86400_000)).toEqual({ cleaned: 1, errors: 0 });
+  const tombstone = await readFile(join(root, 'snapshots', task.id, `${id}.json`), 'utf8');
+  expect(tombstone).not.toContain(old); expect(tombstone).toContain('"cleaned"');
+  expect(await readFile(join(project, 'a.md'), 'utf8')).toBe('new');
+  expect(store.get(task.id).messages.length).toBeGreaterThan(1);
+  await expect(snapshots.restore(task.id, id)).rejects.toThrow('cleaned');
+  expect(await runtime.undoRun(task.id)).toMatchObject({ state: 'partial', restored: 0, conflicts: [{ path: 'a.md' }] });
+});
+it('cleanup does not touch unknown effects or interrupted restore manifests', async () => {
+  let step = 0;
+  const { runtime, project, store } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'new', expectedHash: null }) : answer());
+  const task = runtime.create('save', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  const record = store.get(task.id); record.effectStarted = 'unknown-host'; store.save(record);
+  expect((await runtime.cleanSnapshots(7, Date.now() + 8 * 86400_000)).cleaned).toBe(0);
+  expect(runtime.list()[0].fileChanges![0].state).toBe('saved');
+});
+it('cleanup keeps small tombstones and is idempotent without allowing effect replay', async () => {
+  const { snapshots, project } = await setup();
+  const approved = await action(project, 'writeFile', { path: 'a.md', content: 'new', expectedHash: null });
+  const change = await snapshots.apply('task-one', approved);
+  await snapshots.purge('task-one', change.snapshotId); await snapshots.purge('task-one', change.snapshotId);
+  expect((await snapshots.info('task-one', change.snapshotId)).state).toBe('cleaned');
+  await expect(snapshots.apply('task-one', approved)).rejects.toThrow('replay conflict');
+});
+it('restart marks interrupted batch undo partial rather than resuming file effects', async () => {
+  let step = 0;
+  const { runtime, project, store, root, snapshots } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'new', expectedHash: null }) : answer());
+  const task = runtime.create('save', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  const record = store.get(task.id); record.undo = { state: 'running', restored: 0, conflicts: [], startedAt: new Date().toISOString() }; store.save(record);
+  runtime.shutdown();
+  const next = new TaskRuntime(store, async () => { throw new Error('Must not run model'); }, join(root, 'artifacts'), undefined, { snapshots });
+  resources.find(item => item.store === store)!.runtime = next; next.start();
+  expect(next.list()[0].undo!.state).toBe('partial');
+  expect(await readFile(join(project, 'a.md'), 'utf8')).toBe('new');
+});
+it('cleanup refuses an interrupted restore manifest', async () => {
+  const { root, project, snapshots } = await setup();
+  const saved = await snapshots.apply('task-one', await action(project, 'writeFile', { path: 'a.md', content: 'new', expectedHash: null }));
+  const path = join(root, 'snapshots', 'task-one', `${saved.snapshotId}.json`);
+  const manifest = JSON.parse(await readFile(path, 'utf8')); manifest.state = 'restoring'; await writeFile(path, JSON.stringify(manifest));
+  await expect(snapshots.purge('task-one', saved.snapshotId)).rejects.toThrow('refused');
+});

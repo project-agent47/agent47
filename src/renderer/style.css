@@ -173,3 +173,5 @@ p { text-wrap: pretty; }
 .snapshot-row span { overflow-wrap: anywhere; min-width: 0; }
 .snapshot-row small { display: block; color: var(--color-muted); margin-top: 4px; }
 @media (max-width: 720px) { .host-setting { align-items: flex-start; flex-direction: column; } .tool-permissions label { width: 100%; } }
+.snapshot-controls { border-top: 1px solid var(--color-border); padding-top: var(--space-4); }
+.snapshot-path { overflow-wrap: anywhere; }
