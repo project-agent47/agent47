@@ -211,6 +211,16 @@ export function App() {
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
       <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+        conversationId={task?.conversationId ?? task?.id} grantPage={(tabId, mode) => {
+          const tab = workspace.tabs.find(t => t.id === tabId);
+          if (!task || !tab?.url || needsDecision && mode !== 'deny') return;
+          const input = { taskId: task.id, tabId, expectedURL: tab.url, mode };
+          const confirm = async () => setWorkspace(await bridge.workspaceAgentGrant(input));
+          if (mode === 'deny') { void run(confirm); return; }
+          setLocalDecision({ title: mode === 'allow' ? '授权此网页可信交互' : '授权此网页给当前对话',
+            detail: `${tab.url}\n目标对话：${task.goal.slice(0, 80)}\n范围：此 Tab 的 ${new URL(tab.url).origin}，包括后续执行轮次，应用重启／关闭／刷新失效。\n页面正文与元素标签将发送给 DeepSeek。${mode === 'read' ? '允许读取、切换、滚动与同站导航，不允许点击和输入。' : mode === 'ask' ? '点击和输入仍需在底部批准具体元素和内容。' : '点击和输入不再逐次确认，可能发布、提交或改变远端数据。系统不能可靠识别按钮的业务后果；文件快照不能撤销。仅用于你信任、能承担后果的页面。'}\n不读取密码、Cookie 或 storage，不提供任意 JS／文件上传工具。`,
+            confirmLabel: mode === 'allow' ? '确认可信交互范围' : '确认网页授权', confirm });
+        }}
         canSendPage={!!task && !needsDecision && !task.unknownEffect} sendPage={tabId => void run(async () => {
           if (!task || needsDecision) throw new Error('请先选择对话并完成当前决定。');
           const snapshot = await bridge.workspaceCapture({ tabId, taskId: task.id });

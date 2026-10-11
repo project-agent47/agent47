@@ -80,6 +80,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Unified decision dock and scoped trust](docs/redesign/unified-decision-dock.md)
 - [Local artifact split workspace (Chinese)](docs/redesign/artifact-workspace.md)
 - [Public web tabs and reviewed context (Chinese)](docs/redesign/web-context.md)
+- [Agent browser tools, context and permission design (Chinese)](docs/redesign/agent-browser-tools.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

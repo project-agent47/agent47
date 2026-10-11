@@ -11,6 +11,10 @@ import { classifyDocument, documentHTML, validDocumentRequest } from '../shared/
 import { webOrigin } from './web';
 import { publicProxy } from './public-proxy';
 import { capturePageScript, pageMessage } from '../shared/web-capture';
+import { browserSnapshotScript, browserActionScript, browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput } from '../shared/browser-tools';
+import { effectDigest } from '../core/effects';
+import type { Approval } from '../shared/contracts';
+import type { ToolCall } from '../core/store';
 
 const sourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('artifact'), taskId: z.string().uuid(), artifactId: z.string().min(1).max(128) }).strict(),
@@ -35,6 +39,8 @@ export class Workspace {
   private layoutGeneration = 0;
   private proxies = new Map<string, Awaited<ReturnType<typeof publicProxy>>>();
   private captures = new Map<string, PageCapture>();
+  private browserGrants = new Map<string, { tabId: string; conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow'; generation: string }>();
+  private browserSnapshots = new Map<string, { id: string; conversationId: string; url: string; wcId: number; at: number; elements: Record<string, unknown>[] }>();
   constructor(private path: string, private store: TaskStore, private artifactRoot: string, private owner: () => BrowserWindow | undefined, private changed = () => {}) {}
   async start() {
     let text: string;
@@ -47,7 +53,128 @@ export class Workspace {
     // Native HTML pages are created only when the renderer explicitly lays out a visible tab.
   }
   view(): WorkspaceState {
-    return { ...this.state, tabs: this.state.tabs.map(({ path: _path, origin: _origin, ...tab }) => tab) };
+    return { ...this.state, tabs: this.state.tabs.map(({ path: _path, origin: _origin, ...tab }) => ({ ...tab,
+      agentGrants: [...this.browserGrants.values()].filter(g => g.tabId === tab.id && tab.url && new URL(tab.url).origin === g.origin).map(({ conversationId, origin, mode }) => ({ conversationId, origin, mode })) })) };
+  }
+  private conversation(taskId: string) { const task = this.store.get(taskId); return task.conversationId ?? task.id; }
+  agentGrant(taskId: string, tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow', expectedURL: string) {
+    const conversationId = this.conversation(taskId), tab = this.state.tabs.find(t => t.id === tabId);
+    if (!tab || tab.kind !== 'web' || tab.paused) throw new Error('请先打开网页。');
+    const wc = this.views.get(tabId)?.webContents;
+    if (mode !== 'deny' && (tab.url !== expectedURL || !wc || wc.isDestroyed() || wc.isLoading() || wc.getURL() !== expectedURL)) throw new Error('请重新审阅：网页地址已变化或未加载。');
+    const key = `${conversationId}:${tabId}`;
+    this.browserSnapshots.delete(tabId);
+    if (mode === 'deny') this.browserGrants.delete(key);
+    else this.browserGrants.set(key, { tabId, conversationId, origin: webOrigin(tab.url!), mode, generation: randomUUID() });
+    this.changed(); return this.view();
+  }
+  browserTabs(taskId: string) {
+    const conversationId = this.conversation(taskId);
+    return this.view().tabs.filter(t => t.kind === 'web' && !t.paused && t.agentGrants?.some(g => g.conversationId === conversationId))
+      .map(t => ({ tabId: t.id, url: t.url, active: t.id === this.state.activeId, mode: t.agentGrants!.find(g => g.conversationId === conversationId)!.mode }));
+  }
+  private browserTarget(taskId: string, tabId: string, interact = false) {
+    const grant = this.browserGrants.get(`${this.conversation(taskId)}:${tabId}`), tab = this.state.tabs.find(t => t.id === tabId);
+    if (!grant || !tab || tab.kind !== 'web' || tab.paused || webOrigin(tab.url!) !== grant.origin || interact && grant.mode === 'read') throw new Error('请在工作区为本次对话授权目标网页。');
+    return { grant, tab };
+  }
+  private browserWC(taskId: string, tabId: string, interact = false) {
+    const target = this.browserTarget(taskId, tabId, interact), wc = this.views.get(tabId)?.webContents;
+    if (!wc || wc.isDestroyed() || wc.isLoading() || wc.getURL().length > 2048 || webOrigin(wc.getURL()) !== target.grant.origin ||
+      this.state.activeId !== tabId || !this.state.visible) throw new Error('请激活目标网页并等待加载完成。');
+    return { ...target, wc };
+  }
+  private async browserScript(wc: Electron.WebContents, code: string) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([wc.executeJavaScriptInIsolatedWorld(1002, [{ code }]), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('请检查页面：网页工具超时。')), 8000); })]); }
+    finally { clearTimeout(timer); }
+  }
+  async browserRead(taskId: string, name: string, input: unknown, signal: AbortSignal) {
+    if (signal.aborted) throw new Error('Cancelled');
+    if (name === 'browserTabs') { z.object({}).strict().parse(input); return this.browserTabs(taskId); }
+    const { tabId } = browserTabInput.parse(name === 'browserNavigate' ? { tabId: browserNavigationInput.parse(input).tabId } : name === 'browserScroll' ? { tabId: browserScrollInput.parse(input).tabId } : input);
+    const target = this.browserTarget(taskId, tabId);
+    if (name === 'browserActivate') { await this.update({ activeId: tabId, visible: true }); this.changed(); return { active: tabId, next: 'Wait for layout/loading, then browserRead.' }; }
+    const { wc, grant } = this.browserWC(taskId, tabId);
+    if (name === 'browserNavigate') {
+      const { url } = browserNavigationInput.parse(input);
+      if (webOrigin(url) !== grant.origin) throw new Error('请为跨站目标另行授权，不自动继承权限。');
+      this.browserSnapshots.delete(tabId); await wc.loadURL(url); this.changed();
+      if (this.browserWC(taskId, tabId).grant.generation !== grant.generation || signal.aborted) throw new Error('请重新授权：网页权限已变化。');
+      return { navigated: wc.getURL(), next: 'browserRead' };
+    }
+    if (name === 'browserScroll') {
+      const { deltaY } = browserScrollInput.parse(input); this.browserSnapshots.delete(tabId);
+      await this.browserScript(wc, `window.scrollBy(0, ${deltaY}); true`);
+      if (this.browserWC(taskId, tabId).grant.generation !== grant.generation || signal.aborted) throw new Error('请重新授权：网页权限已变化。');
+      return { scrolled: deltaY, next: 'browserRead' };
+    }
+    if (name !== 'browserRead') throw new Error('Unknown browser tool');
+    const url = wc.getURL(), generation = target.grant.generation;
+    const body = z.object({ title: z.string().max(200), content: z.string().max(8000), truncated: z.boolean() }).parse(await this.browserScript(wc, capturePageScript));
+    const controls = z.object({ title: z.string().max(200), elements: z.array(z.record(z.string(), z.unknown())).max(60) }).parse(await this.browserScript(wc, browserSnapshotScript));
+    let elementsTruncated = controls.elements.length === 60;
+    while (JSON.stringify(controls.elements).length > 12000) { controls.elements.pop(); elementsTruncated = true; }
+    const current = this.browserWC(taskId, tabId);
+    if (signal.aborted || current.grant.generation !== generation || current.wc !== wc || wc.getURL() !== url) throw new Error('请重新读取：网页或授权已变化。');
+    const snapshot = { id: randomUUID(), conversationId: this.conversation(taskId), url, wcId: wc.id, at: Date.now(), elements: controls.elements };
+    this.browserSnapshots.set(tabId, snapshot);
+    return { tabId, snapshotId: snapshot.id, url, title: body.title, content: body.content.slice(0, 4000), truncated: body.truncated || body.content.length > 4000, elements: controls.elements, elementsTruncated, untrusted: true, valuesIncluded: false };
+  }
+  private browserBinding(taskId: string, input: unknown) {
+    const raw = z.record(z.string(), z.unknown()).parse(input);
+    const data = browserElementInput.parse({ tabId: raw.tabId, snapshotId: raw.snapshotId, ref: raw.ref });
+    const target = this.browserWC(taskId, data.tabId, true), snapshot = this.browserSnapshots.get(data.tabId);
+    const element = snapshot?.elements.find(e => e.ref === data.ref);
+    if (!snapshot || snapshot.conversationId !== this.conversation(taskId) || snapshot.id !== data.snapshotId || snapshot.wcId !== target.wc.id || snapshot.url !== target.wc.getURL() || Date.now() - snapshot.at > 120000 || !element) throw new Error('请重新读取页面：元素引用已过期或页面变化。');
+    return { ...target, snapshot, element, data };
+  }
+  async browserPrepare(taskId: string, call: ToolCall): Promise<Approval> {
+    if (call.toolName === 'browserOpen') {
+      const { url } = browserOpenInput.parse(call.input); webOrigin(url); this.store.get(taskId);
+      const action: Approval = { id: call.toolCallId, kind: 'browser', name: '打开并授权网页', content: `URL：${url}\n允许当前对话读取此 Tab 页面正文与元素并进行同站导航；点击和输入仍逐次确认。页面内容会交给 DeepSeek，临时会话不继承系统 Cookie。重启／关闭／刷新撤销授权。`,
+        payload: { operation: 'browserOpen', url }, digest: '', expiresAt: new Date(Date.now() + 600000).toISOString(), state: 'pending' };
+      action.digest = effectDigest(taskId, action); return action;
+    }
+    const input = call.toolName === 'browserFill' ? browserFillInput.parse(call.input) : browserElementInput.parse(call.input);
+    const { grant, snapshot, element } = this.browserBinding(taskId, input);
+    if (element.disabled || element.readOnly || call.toolName === 'browserFill' && (!['input', 'textarea'].includes(String(element.tag)) || !['text', 'search', 'email', 'url', 'tel', 'number', ''].includes(String(element.type).toLowerCase()))) throw new Error('请使用可操作的普通输入框或元素。');
+    const descriptor = { ...element }; delete descriptor.ref;
+    const action: Approval = { id: call.toolCallId, kind: 'browser', name: call.toolName === 'browserClick' ? '点击网页元素' : '输入网页文本',
+      content: JSON.stringify({ url: snapshot.url, element, ...('text' in input ? { text: input.text } : {}), warning: '可能产生远端效果；文件快照不能撤销。输入事件也可能发送数据。' }, null, 2),
+      payload: { ...input, descriptor, grantGeneration: grant.generation, operation: call.toolName }, digest: '',
+      expiresAt: new Date(snapshot.at + 120000).toISOString(), state: 'pending' };
+    action.digest = effectDigest(taskId, action); return action;
+  }
+  browserValidate(taskId: string, action: Approval) {
+    if (effectDigest(taskId, action) !== action.digest || Date.parse(action.expiresAt) <= Date.now()) throw new Error('请重新读取：网页操作已过期。');
+    if (action.payload?.operation === 'browserOpen') { this.store.get(taskId); webOrigin(browserOpenInput.parse({ url: action.payload.url }).url); return false; }
+    const payload = action.payload!, { grant, element } = this.browserBinding(taskId, payload);
+    if (grant.generation !== payload.grantGeneration) throw new Error('请重新授权：网页权限已变化。');
+    if (payload.operation === 'browserClick' && element.href && webOrigin(new URL(String(element.href), this.browserSnapshots.get(String(payload.tabId))!.url).href) !== grant.origin) throw new Error('请先授权链接的跨站目标。');
+    return grant.mode === 'allow';
+  }
+  async browserExecute(taskId: string, action: Approval, signal: AbortSignal) {
+    if (action.state !== 'approved') throw new Error('Approval required');
+    this.browserValidate(taskId, action); if (signal.aborted) throw new Error('Cancelled');
+    if (action.payload?.operation === 'browserOpen') {
+      const url = String(action.payload.url), state = await this.openWeb(url), tabId = state.activeId!;
+      this.changed();
+      const end = Date.now() + 15000;
+      while (Date.now() < end && !signal.aborted) {
+        const wc = this.views.get(tabId)?.webContents;
+        if (wc && !wc.isDestroyed() && !wc.isLoading() && wc.getURL().startsWith('https:')) {
+          if (webOrigin(wc.getURL()) !== webOrigin(url)) throw new Error('请为重定向站点另行授权。');
+          this.agentGrant(taskId, tabId, 'ask', wc.getURL());
+          return { opened: tabId, url: wc.getURL(), mode: 'ask', next: 'browserRead' };
+        }
+        await new Promise(r => setTimeout(r, 50));
+      }
+      throw new Error('请检查网页加载：结果未知，不能自动重放。');
+    }
+    const payload = action.payload!, { wc, data } = this.browserBinding(taskId, payload);
+    const value = await this.browserScript(wc, browserActionScript(payload.operation === 'browserFill' ? 'fill' : 'click', Number(data.ref.slice(1)), payload.descriptor, typeof payload.text === 'string' ? payload.text : undefined));
+    this.browserSnapshots.delete(data.tabId); this.changed(); return value;
   }
   private persist() {
     const body = JSON.stringify(this.state);
@@ -180,6 +307,8 @@ export class Workspace {
   }
   hide() { this.layoutGeneration++; for (const view of this.views.values()) view.setVisible(false); }
   private destroy(id: string) {
+    this.browserSnapshots.delete(id);
+    for (const [key, grant] of this.browserGrants) if (grant.tabId === id) this.browserGrants.delete(key);
     this.proxies.get(id)?.close(); this.proxies.delete(id);
     for (const [key, capture] of this.captures) if (capture.tabId === id) this.captures.delete(key);
     const view = this.views.get(id); if (!view) return;
@@ -221,12 +350,15 @@ export class Workspace {
       wc.on('will-navigate', (event, target) => { try { if (target.length > 2048) throw new Error('URL limit'); webOrigin(target); } catch { event.preventDefault(); } });
       wc.on('will-attach-webview', e => e.preventDefault());
       const navigated = () => {
+        this.browserSnapshots.delete(tab.id);
         if (wc.isDestroyed()) return;
         const target = wc.getURL(); try { webOrigin(target); } catch { return; }
+        for (const [key, grant] of this.browserGrants) if (grant.tabId === tab.id && grant.origin !== webOrigin(target)) this.browserGrants.delete(key);
         tab.url = target.slice(0, 2048); tab.name = new URL(target).hostname.slice(0, 255); tab.sha256 = sha256(tab.url); tab.status = '临时网页会话 · 不自动入模';
         void this.persist().then(this.changed).catch(() => {});
       };
       wc.on('did-navigate', navigated); wc.on('did-navigate-in-page', navigated);
+      wc.on('did-start-navigation', (_event, _url, _inPlace, isMain) => { if (isMain) this.browserSnapshots.delete(tab.id); });
       wc.on('did-fail-load', (_e, code, _description, _url, main) => { if (main && code !== -3) { tab.status = '网页加载失败，可刷新重试'; void this.persist().then(this.changed).catch(() => {}); } });
       owner.contentView.addChildView(view); view.setVisible(false); this.views.set(tab.id, view); this.proxies.set(tab.id, proxy);
       void wc.loadURL(tab.url!).catch(() => {});

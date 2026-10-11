@@ -28,6 +28,9 @@
     "test:workspace:native": "node scripts/e2e-workspace-native.mjs",
     "test:web-workspace:native": "node scripts/e2e-web-workspace-native.mjs",
     "test:web-context:live": "node scripts/e2e-web-context-live.mjs",
+    "test:agent-browser:native": "node scripts/e2e-agent-browser-native.mjs",
+    "test:agent-browser:live": "node scripts/e2e-agent-browser-live.mjs",
+    "test:agent-browser:public-live": "node scripts/e2e-agent-browser-public-live.mjs",
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac"
   },
