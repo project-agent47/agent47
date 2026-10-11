@@ -49,8 +49,8 @@ try {
   await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: '让 Agent 修改', exact: true }).click();
   await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue(draft);
+  await expect.poll(async () => (await tasks())[0].materials?.[0]?.selection, { timeout: 15000 }).toEqual({ start, end: start + selected.length, targetPath: 'notes.ts' });
   const pinned = (await tasks())[0].materials?.[0];
-  if (pinned?.selection?.start !== start || pinned.selection.end !== start + selected.length || pinned.selection.targetPath !== 'notes.ts') throw new Error('Raw repeated-text selection mapped incorrectly');
   if (JSON.stringify((await tasks()).map(t => t.usage)) !== beforeUsage || (await tasks()).length !== 1) throw new Error('Selecting implicitly invoked model');
   await page.screenshot({ path: `.qa/selection-${live ? 'live' : 'native'}-draft.png`, animations: 'disabled' });
   await expect.poll(async () => (await tasks())[0].composerDraft).toBe(draft);

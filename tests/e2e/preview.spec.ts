@@ -31,8 +31,10 @@ test('recorded file diffs open read-only in the right workspace and keep dock co
   await expect(page.getByLabel('产物工作区')).toContainText('示例差异，不执行真实文件工具');
   await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toHaveCount(0);
   await page.screenshot({ path: '.qa/diff-preview.png', animations: 'disabled' });
-  await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await page.getByLabel('切换深色模式').click();
+  await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: '.qa/diff-preview-narrow-dark.png', animations: 'disabled' });
 });
 test('pause occupies the decision dock, supplements do not resume, same run continues', async ({ page }) => {
   await page.goto('/');
