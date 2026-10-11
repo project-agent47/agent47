@@ -5,7 +5,7 @@ export interface Artifact { id: string; name: string; content: string; sha256: s
 export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'directory' | 'shell' | 'code'; payload?: Record<string, unknown>; root?: string; before?: string }
 export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compaction'; state: 'pending' | 'reported' | 'partial' | 'unknown'; input?: number; output?: number; total?: number; cacheRead?: number; reasoning?: number; textDeltas?: number; reasoningDeltas?: number }
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
-export interface SkillImport { ticket: string; skill: SkillView; instructions: string }
+export interface SkillImport { ticket: string; skill: SkillView; instructions: string; replaces?: string; resources?: Record<string, string> }
 export interface ExecutionSettings { hostExecution: boolean; fileMode?: 'snapshot' | 'ask' }
 export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored' }
 export interface RunUndo { state: 'running' | 'completed' | 'partial'; restored: number; conflicts: { path: string; error: string }[]; startedAt: string }
@@ -16,7 +16,9 @@ export interface TaskView {
   approval?: Approval; steps: number;
   conversationId?: string; goalId?: string; parentRunId?: string; runNumber?: number;
   usage?: TokenUsage[]; draft?: { text: string; reasoning: string };
-  question?: { id: string; text: string }; queuedInput?: { id: string; text: string; mode: 'steer' | 'followup' }[];
+  question?: { id: string; text: string }; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup' }[];
+  skillPins?: Record<string, string>;
+  webOrigins?: string[];
   context?: { compactions: number; estimatedTokens: number; keptFrom: number };
   unknownEffect?: boolean;
   fileMode?: 'snapshot' | 'ask'; hostMode?: 'ask' | 'allow';
@@ -32,7 +34,8 @@ export interface AgentBridge {
   listTasks(): Promise<TaskView[]>;
   createTask(input: CreateInput): Promise<TaskView>;
   cancelTask(id: string): Promise<void>;
-  sendMessage(input: { taskId: string; text: string; mode: 'steer' | 'followup'; clientMessageId: string }): Promise<TaskView>;
+  sendMessage(input: { taskId: string; text: string; mode: 'queue' | 'steer' | 'followup'; clientMessageId: string }): Promise<TaskView>;
+  manageQueue(input: { taskId: string; messageId: string; action: 'delete' | 'send' }): Promise<TaskView>;
   resolveUnknown(taskId: string): Promise<void>;
   decide(input: { taskId: string; approvalId: string; digest: string; approve: boolean }): Promise<void>;
   chooseFolder(): Promise<FolderGrant | undefined>;
@@ -44,6 +47,8 @@ export interface AgentBridge {
   previewSkill(): Promise<SkillImport | undefined>;
   installSkill(ticket: string): Promise<void>;
   setSkill(input: { id: string; enabled: boolean }): Promise<void>;
+  removeSkill(id: string): Promise<void>;
+  setWebOrigins(input: { taskId: string; origins: string[] }): Promise<void>;
   executionSettings(): Promise<ExecutionSettings>;
   setExecutionSettings(input: Partial<ExecutionSettings>): Promise<void>;
   setTaskPermissions(input: { taskId: string; fileMode: 'snapshot' | 'ask'; hostMode: 'ask' | 'allow' }): Promise<void>;

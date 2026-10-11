@@ -15,6 +15,7 @@ import { modelTransport } from './transport';
 import { SkillRegistry } from './skills';
 import { executeHost } from './host';
 import { FileSnapshots } from '../core/snapshots';
+import { readWeb, webOrigin } from './web';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const single = app.requestSingleInstanceLock();
@@ -74,7 +75,7 @@ async function boot(): Promise<void> {
       changeTimer = setTimeout(() => { changeTimer = undefined; window?.webContents.send('tasks:changed'); }, 60);
     }
   };
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots });
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb });
   protocol.handle('agent47', request => {
     const parsed = new URL(request.url);
     if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });
@@ -95,8 +96,12 @@ async function boot(): Promise<void> {
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
   handle('tasks:send', value => {
-    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['steer', 'followup']), clientMessageId: idSchema }).strict().parse(value);
+    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['queue', 'steer', 'followup']), clientMessageId: idSchema }).strict().parse(value);
     return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId);
+  });
+  handle('tasks:queue', value => {
+    const input = z.object({ taskId: idSchema, messageId: idSchema, action: z.enum(['delete', 'send']) }).strict().parse(value);
+    return runtime.manageQueue(input.taskId, input.messageId, input.action);
   });
   handle('tasks:resolve', value => runtime.resolveUnknown(idSchema.parse(value)));
   handle('skills:list', () => skills.list());
@@ -109,6 +114,11 @@ async function boot(): Promise<void> {
   handle('skills:set', value => {
     const input = z.object({ id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), enabled: z.boolean() }).strict().parse(value);
     return skills.set(input.id, input.enabled);
+  });
+  handle('skills:remove', value => skills.remove(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64).parse(value)));
+  handle('tasks:web', value => {
+    const input = z.object({ taskId: idSchema, origins: z.array(z.string().max(2048)).max(10) }).strict().parse(value);
+    runtime.setWebOrigins(input.taskId, input.origins.map(webOrigin));
   });
   handle('tasks:permissions', value => {
     const input = z.object({ taskId: idSchema, fileMode: z.enum(['snapshot', 'ask']), hostMode: z.enum(['ask', 'allow']) }).strict().parse(value);

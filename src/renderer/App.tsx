@@ -39,7 +39,6 @@ export function App() {
   const [artifact, setArtifact] = useState<{ task: TaskView; artifact: Artifact }>();
   const [connection, setConnection] = useState<ProviderView>();
   const [reply, setReply] = useState('');
-  const [replyMode, setReplyMode] = useState<'steer' | 'followup'>('steer');
   const [extensions, setExtensions] = useState<SkillView[]>([]);
   const [skillImport, setSkillImport] = useState<SkillImport>();
   const [hostEnabled, setHostEnabled] = useState(false);
@@ -98,7 +97,7 @@ export function App() {
   const latest = tasks.filter((t, index) => tasks.findIndex(other => (other.conversationId ?? other.id) === (t.conversationId ?? t.id)) === index);
   const visible = latest.filter(t => t.goal.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
 
-  return <div className="app">
+  return <div className={selected ? 'app task-open' : 'app'}>
     <aside className="sidebar" inert={artifact ? true : undefined}>
       <button className="brand" onClick={() => go('home')} aria-label="回到任务中心"><span className="brand-mark"><Logo small /></span><span>Agent47<span className="brand-caption">YOUR LOCAL AGENT</span></span><span className="version">02</span></button>
       <button className="new-task" onClick={() => { go('home'); queueMicrotask(() => goalRef.current?.focus()); }}><Plus size={17} />新任务<span className="keycap">⌘ N</span></button>
@@ -123,11 +122,10 @@ export function App() {
       {error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={16} /></button></div>}
       <main className={selected ? 'content task-content' : 'content'}>
         {page === 'home' && !task && <div className="home page-enter">
-          <div className="page-eyebrow"><span className="local-dot" />为你推进，不替你越界</div>
-          <div className="home-heading"><div><h1>接下来，交给 Agent47。</h1><p>说清目标。必要的步骤由任务决定。</p></div><div className="heading-symbol"><Logo /></div></div>
+          <div className="home-heading"><div><h1>Agentic Workbench</h1><p>DeepSeek · 本地任务、文件与 Skills</p></div></div>
           <form className="composer" onSubmit={create}>
             <label className="sr-only" htmlFor="goal">任务目标</label>
-            <textarea id="goal" ref={goalRef} placeholder="你想完成什么？例如：审阅这个项目，整理一份可执行的改造清单。" value={goal} onChange={e => setGoal(e.target.value)} maxLength={12000} rows={3} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
+            <textarea id="goal" ref={goalRef} placeholder="描述目标，或选择项目后开始工作…" value={goal} onChange={e => setGoal(e.target.value)} maxLength={12000} rows={2} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
             <div className="composer-bottom"><div className="composer-options"><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
           </form>
           <div className="composer-note"><ShieldCheck size={14} />{(folder?.fileMode ?? fileMode) === 'snapshot' ? '选择项目即授权文件读写；改动前自动快照，可恢复。' : '已选项目可读取；文件与目录修改逐次确认。'}<span>⌘ / Ctrl + Enter</span></div>
@@ -145,7 +143,8 @@ export function App() {
           <div className="task-heading"><button className="text-button back" onClick={() => setSelected(undefined)}><ArrowLeft size={15} />全部任务</button><div className="task-actions"><button className="icon-button" aria-label={inspector ? '隐藏执行详情' : '显示执行详情'} onClick={() => setInspector(!inspector)}><Activity size={18} /></button>{!['completed', 'failed', 'cancelled'].includes(task.status) && <button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.cancelTask(task.id))}><Square size={12} />停止任务</button>}</div></div>
           <div className="task-title"><Status task={task} /><h1>{task.goal.length > 100 ? task.goal.slice(0, 100) + '…' : task.goal}</h1><div className="task-meta"><span>{skills.find(s => s.id === task.skill)?.title}</span><span>第 {task.runNumber ?? 1} 轮</span><span>{task.steps} 个模型步骤</span></div></div>
           <TokenStats tasks={tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id))} />
-          <section className="tool-permissions" aria-label="本次对话工具权限"><div><strong>本次对话工具权限</strong><span>{task.root ?? '尚未选择项目目录'}</span></div>
+          {!!Object.keys(task.skillPins ?? {}).length && <div className="active-skills">已加载 Skills：{Object.entries(task.skillPins!).map(([id, hash]) => <span key={id}>{id} · {hash.slice(0, 8)}</span>)}</div>}
+          <details className="permission-disclosure"><summary>工具权限 · 文件{task.fileMode === 'snapshot' ? '自动快照' : '逐次确认'} · Shell {hostEnabled ? task.hostMode === 'allow' ? '已授权' : '需确认' : '关闭'} · {task.root ?? '无项目目录'}</summary><section className="tool-permissions" aria-label="本次对话工具权限"><div><strong>本次对话工具权限</strong><span>{task.root ?? '尚未选择项目目录'}</span></div>
             <label>文件与目录<select aria-label="本次对话文件权限" disabled={busy} value={task.fileMode ?? 'ask'} onChange={e => void run(() => bridge.setTaskPermissions({ taskId: task.id, fileMode: e.target.value as 'snapshot' | 'ask', hostMode: task.hostMode ?? 'ask' }))}><option value="snapshot">自动快照，免逐文件确认</option><option value="ask">每次修改确认</option></select></label>
             <label>Shell / JavaScript<select aria-label="本次对话执行权限" disabled={busy || !hostEnabled || !task.root} value={task.hostMode ?? 'ask'} onChange={e => {
               const mode = e.target.value as 'ask' | 'allow';
@@ -153,9 +152,11 @@ export function App() {
               void run(() => bridge.setTaskPermissions({ taskId: task.id, fileMode: task.fileMode ?? 'ask', hostMode: mode }));
             }}><option value="ask">{hostEnabled ? '每次执行确认' : '未启用（到工具设置开启）'}</option><option value="allow">本次对话免确认（可信任务）</option></select></label>
             <button className="text-button" onClick={() => go('settings')}>工具设置<SlidersHorizontal size={14} /></button>
-          </section>
+          </section></details>
+          <WebAccess task={task} busy={busy} run={run} />
           <div className={inspector ? 'task-layout with-inspector' : 'task-layout'}><div className="conversation">
-            {task.events.filter(e => ['assistant', 'user', 'error', 'reasoning'].includes(e.kind)).map(e => e.kind === 'reasoning'
+            {task.events.filter(e => ['assistant', 'user', 'error', 'reasoning', 'tool'].includes(e.kind)).map(e => e.kind === 'tool'
+              ? <details className="tool-event" key={e.id}><summary><CheckCircle2 size={13} />{e.text.split(' · ')[0]}<time>{time(e.at)}</time></summary><pre>{e.text}</pre></details> : e.kind === 'reasoning'
               ? <details className="reasoning" key={e.id}><summary>模型返回的推理内容</summary><Markdown>{e.text}</Markdown></details>
               : <article className={`message ${e.kind}`} key={e.id}><div className="message-icon">{e.kind === 'user' ? <span>你</span> : <Logo small />}</div><div className="message-body"><div className="message-author">{e.kind === 'user' ? '你' : e.kind === 'error' ? '执行中断' : 'Agent47'}<time>{time(e.at)}</time></div>{e.kind === 'assistant' ? <Markdown>{e.text}</Markdown> : <div className="message-text">{e.text}</div>}</div></article>)}
             {task.draft?.reasoning && <details className="reasoning"><summary>正在接收模型推理…</summary><Markdown>{task.draft.reasoning}</Markdown></details>}
@@ -183,31 +184,32 @@ export function App() {
             {!!task.artifacts.length && <section className="task-artifacts"><h2>这次任务的成果</h2>{task.artifacts.map(a => <button className="artifact-row" key={a.id} onClick={() => setArtifact({ task, artifact: a })}><FileText size={22} /><span><strong>{a.name}</strong><small>已保存 · {bridge.preview ? '示例成果' : '内容校验可追溯'}</small></span><ArrowUpRight size={17} /></button>)}</section>}
             {['failed', 'cancelled'].includes(task.status) && <div className="task-end-note">这个任务已结束，不会自动重新执行。你可以复制目标，创建一个新任务。<button className="text-button" onClick={() => { setGoal(task.goal); setSkill(task.skill); setSelected(undefined); }}>带入新任务<ArrowUpRight size={14} /></button></div>}
             {task.status === 'completed' && <div className="completion-note"><CheckCircle2 size={15} />任务已完成。已结束的任务不会被重新执行。</div>}
-            <form className="reply-composer" onSubmit={event => { event.preventDefault(); if (!reply.trim() || busy) return; void run(async () => { const next = await bridge.sendMessage({ taskId: task.id, text: reply.trim(), mode: replyMode, clientMessageId: crypto.randomUUID() }); setSelected(next.id); setReply(''); }); }}>
-              <label htmlFor="reply">继续对话</label><textarea id="reply" value={reply} onChange={e => setReply(e.target.value)} maxLength={12000} rows={3} placeholder={task.status === 'awaiting_input' ? '回答上面的问题…' : '补充要求或继续追问…'} />
-              <div className="composer-bottom"><select aria-label="消息发送方式" value={replyMode} onChange={e => setReplyMode(e.target.value as 'steer' | 'followup')}><option value="steer">当前工具结束后调整</option><option value="followup">本轮结束后继续</option></select><button className="primary" type="submit" disabled={!reply.trim() || busy || task.status === 'awaiting_reconciliation' || task.unknownEffect}>发送消息<ArrowUp size={16} /></button></div>
-              <p className="context-note">追问开启新执行轮次；运行中输入在安全边界生效，不会自动批准写入。</p>
-              {!!task.queuedInput?.length && <p className="context-note">已保存 {task.queuedInput.length} 条待处理消息。</p>}
-            </form>
           </div>
           {inspector && <aside className="inspector"><div className="inspector-heading"><h2>执行详情</h2><button className="icon-button" aria-label="关闭执行详情" onClick={() => setInspector(false)}><PanelRightClose size={17} /></button></div><div className="permission-summary"><span>本次权限</span><p><Folder size={14} />{task.root || '未授权任何项目目录'}</p><p><ShieldCheck size={14} />写入与主机执行逐次审批</p></div><h3>事件记录</h3><div className="event-timeline">{task.events.map(e => <div key={e.id} className="timeline-event"><span className="timeline-dot" /><div><time>{time(e.at)} · {({ user: '目标', assistant: '回复', reasoning: '推理', tool: '工具', system: '状态', error: '错误' })[e.kind]}</time><p>{e.text.length > 240 ? e.text.slice(0, 240) + '…' : e.text}</p></div></div>)}</div><div className="inspector-foot">任务与检查点保存在本地。<br />模型请求由所选服务处理。</div></aside>}
           </div>
+          <section className="composer-dock" aria-label="对话输入区">
+            {!!task.queuedInput?.length && <div className="message-queue" aria-label="待发送消息"><div className="queue-heading">待发送 · {task.queuedInput.length}<span>{['completed', 'cancelled', 'failed'].includes(task.status) ? '已暂停，点击立即发送继续' : task.status === 'awaiting_approval' ? '审批等待中，立即发送可改写要求' : '下一个工具边界合并发送'}</span></div>{task.queuedInput.map(item => <div className="queue-row" key={item.id}><p>{item.text}</p><button className="secondary small-button" disabled={busy || task.status === 'awaiting_reconciliation'} onClick={() => void run(async () => { const next = await bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'send' }); setSelected(next.id); })}>立即发送</button><button className="icon-button" aria-label={`删除待发送消息：${item.text}`} disabled={busy} onClick={() => void run(() => bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'delete' }))}><X size={15} /></button></div>)}</div>}
+            <form className="reply-composer" onSubmit={event => { event.preventDefault(); if (!reply.trim() || busy) return; void run(async () => { const next = await bridge.sendMessage({ taskId: task.id, text: reply.trim(), mode: 'queue', clientMessageId: crypto.randomUUID() }); setSelected(next.id); setReply(''); }); }}>
+              <label className="sr-only" htmlFor="reply">继续对话</label><textarea id="reply" value={reply} onChange={e => setReply(e.target.value)} maxLength={12000} rows={2} placeholder={task.status === 'awaiting_input' ? '回答上面的问题…' : '补充要求或继续追问…'} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
+              <div className="composer-bottom"><span className="context-note">Enter 发送 · Shift + Enter 换行 · {['running', 'queued', 'awaiting_approval'].includes(task.status) ? '先加入队列，可立即打断模型；工具不强杀' : '继续对话不重放旧动作'}</span><button className="primary small-button" type="submit" disabled={!reply.trim() || busy || task.status === 'awaiting_reconciliation' || (task.unknownEffect && task.status !== 'running')}>发送消息<ArrowUp size={16} /></button></div>
+            </form>
+          </section>
         </div>}
         {page === 'artifacts' && <div className="standard-page page-enter"><div className="page-eyebrow">可审阅，可带走</div><h1>成果库</h1><p className="page-description">经过确认的交付物集中在这里。每份成果都能回到它的来源任务。</p><div className="artifact-grid">{tasks.flatMap(t => t.artifacts.map(a => <button className="artifact-card" key={`${t.id}-${a.id}`} onClick={() => setArtifact({ task: t, artifact: a })}><span className="artifact-type"><FileText size={25} /><span>{a.name.split('.').pop()?.toUpperCase()}</span></span><h2>{a.name}</h2><p>{t.goal}</p><div><span>{bridge.preview ? '示例成果' : '已批准创建'} · {time(t.updatedAt)}</span><ArrowUpRight size={16} /></div></button>))}</div>{!tasks.some(t => t.artifacts.length) && <div className="empty-state bordered"><Layers size={30} /><h3>还没有已保存的成果</h3><p>批准任务中的写入申请后，成果会出现在这里。</p><button className="secondary" onClick={() => go('home')}>回到任务中心<ArrowUpRight size={15} /></button></div>}</div>}
         {page === 'capabilities' && <div className="standard-page page-enter">
-          <div className="page-eyebrow">能力可见，权限具体</div><h1>不是一套固定的流程。</h1>
+          <h1>能力与 Skills</h1>
           <p className="page-description">任务指导与 skill 包影响如何处理目标，但不会扩大工具权限。</p>
           <div className="skill-cards">{skills.map(s => <article className="skill-card" key={s.id}><span className="skill-code">{s.id.toUpperCase()}</span><h2>{s.title}</h2><p>{s.description}</p><button className="text-button" onClick={() => { setSkill(s.id); go('home'); }}>用于新任务<ArrowUpRight size={14} /></button></article>)}</div>
           <section className="capability-section"><h2>Skills 扩展包</h2><p>导入含 SKILL.md、references 与 scripts 的文本目录。只加载启用包的元信息，完整内容按需读取；脚本不会自动安装或执行。</p>
             <button className="secondary" disabled={busy} onClick={() => void run(async () => setSkillImport(await bridge.previewSkill()))}>选择 Skill 包</button>
-            {extensions.map(extension => <article className="skill-entry" key={extension.id}><div><strong>{extension.name}</strong><p>{extension.description}</p><small>{extension.files.length} 个文本文件 · {extension.hash.slice(0, 12)}</small></div><button className="secondary" disabled={busy} onClick={() => void run(() => bridge.setSkill({ id: extension.id, enabled: !extension.enabled }))}>{extension.enabled ? '停用' : '启用'}</button></article>)}
+            {extensions.map(extension => <article className="skill-entry" key={extension.id}><div><strong>{extension.name}</strong><p>{extension.description}</p><small>{extension.files.length} 个文本文件 · 固定版本 {extension.hash.slice(0, 12)}</small></div><button className="secondary" disabled={busy} onClick={() => void run(() => bridge.setSkill({ id: extension.id, enabled: !extension.enabled }))}>{extension.enabled ? '停用' : '启用'}</button><button className="secondary" disabled={busy} onClick={() => void run(async () => { const next = await bridge.previewSkill(); if (next && next.skill.id !== extension.id) throw new Error(`请选择同名 ${extension.name} 包来更新。`); setSkillImport(next); })}>更新</button><button className="secondary" disabled={busy} onClick={() => { if (window.confirm(`卸载 ${extension.name}？停止后续加载，保留历史版本与会话记录；已经进入模型上下文的内容不会被擦除。`)) void run(() => bridge.removeSkill(extension.id)); }}>卸载</button></article>)}
             {!extensions.length && <p className="context-note">尚无已安装扩展；上面的三个任务指导不是完整 skill 包。</p>}
-            {skillImport && <section className="question-card"><h3>审阅导入：{skillImport.skill.name}</h3><p>{skillImport.skill.description}</p><p className="context-note">文件：{skillImport.skill.files.join(' · ')}</p><pre>{skillImport.instructions}</pre><div className="composer-bottom"><button className="secondary" onClick={() => setSkillImport(undefined)}>取消导入</button><button className="primary" onClick={() => void run(async () => { await bridge.installSkill(skillImport.ticket); setSkillImport(undefined); })}>导入为停用包</button></div></section>}
+            {skillImport && <section className="question-card"><h3>审阅{skillImport.replaces ? '更新' : '导入'}：{skillImport.skill.name}</h3><p>{skillImport.skill.description}</p><p className="context-note">{skillImport.replaces ? `旧版本 ${skillImport.replaces.slice(0, 12)} → ${skillImport.skill.hash.slice(0, 12)}；已加载会话保持旧版本，新版本需重新启用。` : '导入后默认停用。'} 文件：{skillImport.skill.files.join(' · ')}</p><pre>{skillImport.instructions}</pre>{Object.entries(skillImport.resources ?? {}).filter(([path]) => path !== 'SKILL.md').map(([path, content]) => <details className="reasoning" key={path}><summary>{path}</summary><pre>{content}</pre></details>)}<div className="composer-bottom"><button className="secondary" onClick={() => setSkillImport(undefined)}>取消导入</button><button className="primary" onClick={() => void run(async () => { await bridge.installSkill(skillImport.ticket); setSkillImport(undefined); })}>{skillImport.replaces ? '更新为停用包' : '导入为停用包'}</button></div></section>}
           </section>
           <section className="capability-section"><h2>本机执行</h2><p>使用 Electron 自带 Node utility process 执行 JavaScript，使用系统 Shell 执行命令。独立进程不是安全沙箱；批准后拥有你的系统用户权限，可能访问目录之外的数据与网络。环境不会继承应用的模型密钥或代理配置。</p>
             <ToolSettings settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />
           </section>
-          <section className="capability-section"><h2>这一版能做什么</h2><div className="capability-table">{[['真实模型', '流式文本与供应商返回的推理，Markdown、多轮追问和 token 用量。'], ['项目文件', '授权目录内受限读取，按原文哈希审阅创建/修改；不做隐式覆盖。'], ['成果创建', '审阅完整内容后保存到应用成果库。'], ['上下文管理', '在安全 turn 边界自动压缩，保留完整本地历史；估计值不冒充供应商 tokenizer。']].map(([name, text]) => <div key={name}><span><CheckCircle2 size={16} />{name}</span><p>{text}</p></div>)}</div><div className="boundary-note"><LockKeyhole size={20} /><div><strong>尚未开放的能力</strong><p>OS 安全沙箱、浏览器、系统桌面自动化、定时触发、MCP 与多 Agent 协调仍未实现。账单和金额预算不在当前范围。</p></div></div></section>
+          <section className="capability-section"><h2>这一版能做什么</h2><div className="capability-table">{[['真实模型', '流式文本与供应商返回的推理，Markdown、多轮追问和 token 用量。'], ['项目文件', '授权目录内读取、自动快照修改与整轮撤销；不覆盖外部变更。'], ['网页读取', '对话内授权公共 HTTPS 站点后，只读获取 HTML／文本。不登录、不执行网页脚本，不点击或提交表单。'], ['成果创建', '按文件权限模式保存到应用成果库。'], ['上下文管理', '在安全 turn 边界自动压缩，保留完整本地历史；估计值不冒充供应商 tokenizer。']].map(([name, text]) => <div key={name}><span><CheckCircle2 size={16} />{name}</span><p>{text}</p></div>)}</div><div className="boundary-note"><LockKeyhole size={20} /><div><strong>尚未开放的能力</strong><p>OS 安全沙箱、完整浏览器自动化、系统桌面自动化、定时触发、MCP 与多 Agent 协调仍未实现。账单和金额预算不在当前范围。</p></div></div></section>
         </div>}
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
@@ -215,6 +217,20 @@ export function App() {
     </div>
     {artifact && <div className="modal-backdrop" role="presentation" onClick={() => setArtifact(undefined)}><section ref={dialogRef} className="artifact-modal" role="dialog" aria-modal="true" aria-label={artifact.artifact.name} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow">成果预览</span><h2>{artifact.artifact.name}</h2></div><button className="icon-button" aria-label="关闭成果预览" onClick={() => setArtifact(undefined)}><X size={20} /></button></div><pre>{artifact.artifact.content}</pre><div className="modal-footer"><button className="text-button" onClick={() => { open(artifact.task.id); setArtifact(undefined); }}>查看来源任务<ArrowUpRight size={14} /></button><button className="primary" onClick={() => void run(() => bridge.openArtifact({ taskId: artifact.task.id, artifactId: artifact.artifact.id }))}><Download size={16} />{bridge.preview ? '下载示例文件' : '用默认应用打开'}</button></div></section></div>}
   </div>;
+}
+
+function WebAccess({ task, busy, run }: { task: TaskView; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void> }) {
+  const [url, setUrl] = useState('');
+  return <details className="permission-disclosure web-access"><summary>网页读取 · {task.webOrigins?.length ?? 0} 个授权站点</summary>
+    <form onSubmit={event => { event.preventDefault(); void run(async () => {
+      const parsed = new URL(url);
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('请使用不含登录信息的 HTTPS 站点地址。');
+      const origin = parsed.origin;
+      if (!window.confirm(`授权本次对话读取 ${origin} 的公开 HTTPS 页面？请求不携带登录 Cookie 或模型密钥，内容会发送给 DeepSeek；无脚本、点击或表单提交能力。GET 不是远端操作回滚机制，请勿授权有副作用的接口。`)) return;
+      await bridge.setWebOrigins({ taskId: task.id, origins: [...(task.webOrigins ?? []), origin] }); setUrl('');
+    }); }}><label className="sr-only" htmlFor="web-origin">授权站点 URL</label><input id="web-origin" type="url" required value={url} placeholder="https://docs.example.com" onChange={e => setUrl(e.target.value)} /><button className="secondary small-button" disabled={busy}>授权站点</button></form>
+    {(task.webOrigins ?? []).map(origin => <div className="queue-row" key={origin}><p>{origin}</p><button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.setWebOrigins({ taskId: task.id, origins: task.webOrigins!.filter(item => item !== origin) }))}>撤销访问</button></div>)}
+  </details>;
 }
 
 function ToolSettings({ settings, busy, run }: { settings: ExecutionSettings; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void> }) {

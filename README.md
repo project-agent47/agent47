@@ -42,7 +42,9 @@ The Electron smoke script uses a deterministic model fixture and a temporary use
 - SQLite task/message/action checkpoints, serial queue, restart recovery and cancellation.
 - Isolated renderer/preload/main architecture; no unauthenticated HTTP API.
 
-No browser/desktop automation, scheduler, MCP, multi-agent coordination, OS tool sandbox, package marketplace or binary skill assets yet. No billing/price/monetary-budget feature is in scope. Do not mistake the preview fixture for external execution.
+The compact workbench docks its conversation composer outside scrolling history. Active-run input enters a persistent, removable queue; messages join at the next tool boundary, or an explicit immediate-send interrupts only the model request. Skills support reviewed upgrades, inactive-by-default new versions, immutable per-conversation hash pins and unregistering without erasing history. The `readWeb` tool reads bounded public HTTPS HTML/text only from explicitly authorized origins; it has no cookies, credentials, JavaScript or browser action capability.
+
+No full browser/desktop automation, scheduler, MCP, multi-agent coordination, OS tool sandbox, package marketplace or binary skill assets yet. No billing/price/monetary-budget feature is in scope. Do not mistake the preview fixture for external execution.
 
 ## Packaging
 
@@ -64,6 +66,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Conversation, tools, skills and context increment](docs/redesign/conversation-tools-skills.md)
 - [Simplified permissions, directories and recoverable snapshots](docs/redesign/permissions-and-snapshots.md)
 - [Whole-run file undo and opt-in snapshot retention](docs/redesign/run-undo-and-retention.md)
+- [Compact workbench, queued input, skill lifecycle and public HTTPS reader](docs/redesign/compact-workbench.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

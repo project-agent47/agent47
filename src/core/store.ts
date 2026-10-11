@@ -9,6 +9,8 @@ export interface TaskRecord extends TaskView {
   messages: ModelMessage[]; pending: ToolCall[];
   compactions?: { summary: string; keptFrom: number; at: string }[];
   effectStarted?: string; loadedSkills?: string[];
+  inputBoundary?: boolean;
+  queueAfterStep?: number;
 }
 
 /** One process owns this database. Every checkpoint includes messages and action state. */
@@ -48,14 +50,14 @@ export class TaskStore {
     this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify(task));
   }
   command(id: string): string | undefined { return this.db.prepare('SELECT task_id FROM commands WHERE id=?').get(id)?.task_id as string | undefined; }
-  saveCommand(id: string, task: TaskRecord): void {
+  saveCommand(id: string, task: TaskRecord, parent?: TaskRecord): void {
     this.db.exec('BEGIN IMMEDIATE');
-    try { this.save(task); this.db.prepare('INSERT INTO commands VALUES (?,?)').run(id, task.id); this.db.exec('COMMIT'); }
+    try { if (parent) this.save(parent); this.save(task); this.db.prepare('INSERT INTO commands VALUES (?,?)').run(id, task.id); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
-  saveContinuation(id: string, task: TaskRecord): void {
+  saveContinuation(id: string, task: TaskRecord, parent?: TaskRecord): void {
     this.db.exec('BEGIN IMMEDIATE');
-    try { this.save(task); this.db.prepare('UPDATE commands SET task_id=? WHERE id=?').run(task.id, id); this.db.exec('COMMIT'); }
+    try { if (parent) this.save(parent); this.save(task); this.db.prepare('UPDATE commands SET task_id=? WHERE id=?').run(task.id, id); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   close(): void { this.db.close(); }
@@ -69,6 +71,6 @@ export function publicTask(task: TaskRecord): TaskView {
     parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
     context: task.context, unknownEffect: Boolean(task.effectStarted),
-    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo
+    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? []
   };
 }

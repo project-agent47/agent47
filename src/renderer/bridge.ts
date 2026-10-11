@@ -45,8 +45,11 @@ const previewBridge: AgentBridge = {
       task.status = 'completed'; task.steps = 1;
       task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant',
         text: '这是交互预览，没有调用模型或读取文件。\n\n桌面应用会把你的目标交给已配置的模型，由模型选择必要的工具。当提出写入成果时，应用会暂停并展示完整内容，等待你的确认。你可以打开左侧待审阅的示例任务，体验完整审批流程。' });
+      for (const input of task.queuedInput ?? []) task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text });
+      if (task.queuedInput?.length) task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '队列已在示例响应边界合并发送。本预览不调用模型，也不执行工具。' });
+      task.queuedInput = [];
       timers.delete(task.id); emit();
-    }, 1200));
+    }, 3000));
     return clone(task);
   },
   cancelTask: async id => {
@@ -57,17 +60,30 @@ const previewBridge: AgentBridge = {
   },
   sendMessage: async input => {
     const parent = samples.find(t => t.id === input.taskId)!;
+    if (['running', 'queued', 'awaiting_approval'].includes(parent.status)) {
+      parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode }); emit(); return clone(parent);
+    }
     const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
       status: 'completed', approval: undefined, artifacts: [], steps: 1, usage: [], events: [...parent.events,
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text },
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '## 继续讨论\n\n这是**多轮交互示例**，没有调用模型。\n\n| 能力 | 状态 |\n|---|---|\n| Markdown | 示例渲染 |\n| 工具 | 不执行 |' }] };
     samples.unshift(task); emit(); return clone(task);
   },
+  manageQueue: async input => {
+    const task = samples.find(t => t.id === input.taskId)!;
+    const item = task.queuedInput?.find(entry => entry.id === input.messageId);
+    if (!item) throw new Error('消息已发送或删除。');
+    task.queuedInput = task.queuedInput!.filter(entry => entry.id !== item.id);
+    if (input.action === 'send') { task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: item.text }); task.status = 'completed'; if (task.approval) task.approval.state = 'denied'; }
+    emit(); return clone(task);
+  },
   resolveUnknown: async () => {},
   listSkills: async () => [],
   previewSkill: async () => { throw new Error('预览不读取本机 skill 包，请在桌面应用中导入。'); },
   installSkill: async () => { throw new Error('预览不安装 skill。'); },
   setSkill: async () => {},
+  removeSkill: async () => {},
+  setWebOrigins: async input => { const task = samples.find(t => t.id === input.taskId)!; task.webOrigins = input.origins; emit(); },
   executionSettings: async () => clone(previewExecution),
   setExecutionSettings: async input => { previewExecution = { hostExecution: input.hostExecution ?? previewExecution.hostExecution, fileMode: input.fileMode ?? previewExecution.fileMode }; emit(); },
   setTaskPermissions: async input => {
