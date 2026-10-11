@@ -236,9 +236,9 @@ export class TaskRuntime {
   resolveUnknown(id: string): void {
     const task = this.store.get(id);
     if (!['awaiting_reconciliation', 'cancelled'].includes(task.status) || !task.effectStarted || task.pending[0]?.toolCallId !== task.effectStarted) throw new Error('No unknown execution');
-    this.toolResult(task, task.pending[0], 'Previous host execution outcome is unknown. User inspected it. Never replay it automatically.', true);
+    this.toolResult(task, task.pending[0], 'Previous execution outcome is unknown. User inspected the effects; this does not verify success. Never replay the operation automatically.', true);
     task.effectStarted = undefined; if (task.status !== 'cancelled') task.status = 'queued';
-    this.event(task, 'system', '已人工检查未知效果，原命令不会重放。'); this.save(task); this.kick();
+    this.event(task, 'system', '已人工检查未知效果，不代表操作成功；原操作不会重放。'); this.save(task); this.kick();
   }
   private lockProject(task: TaskRecord): string {
     if (!task.root || [...this.restoringRoots].some(root => overlappingRoots(root, task.root!)) ||

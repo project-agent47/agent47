@@ -359,7 +359,12 @@ export class Workspace {
         void this.persist().then(this.changed).catch(() => {});
       };
       wc.on('did-navigate', navigated); wc.on('did-navigate-in-page', navigated);
-      wc.on('did-start-navigation', (_event, _url, _inPlace, isMain) => { if (isMain) this.browserSnapshots.delete(tab.id); });
+      wc.on('did-start-navigation', (_event, _url, _inPlace, isMain) => {
+        if (isMain) {
+          this.browserSnapshots.delete(tab.id);
+          for (const [id, capture] of this.captures) if (capture.tabId === tab.id) this.captures.delete(id);
+        }
+      });
       wc.on('did-fail-load', (_e, code, _description, _url, main) => { if (main && code !== -3) { tab.status = '网页加载失败，可刷新重试'; void this.persist().then(this.changed).catch(() => {}); } });
       owner.contentView.addChildView(view); view.setVisible(false); this.views.set(tab.id, view); this.proxies.set(tab.id, proxy);
       void wc.loadURL(tab.url!).catch(() => {});

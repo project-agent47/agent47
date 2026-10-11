@@ -44,6 +44,13 @@ try {
   if (!tasks.some(t => t.events.some(e => e.kind === 'user' && e.text.includes('user-reviewed-web-snapshot') && e.text.includes('WEB_PUBLIC_EVIDENCE')))) throw new Error('Reviewed snapshot did not reach runtime');
   await page.screenshot({ path: '.qa/web-native-consented.png' });
   const state = await page.evaluate(() => window.agent47.workspaceView());
+  const oldCapture = await page.evaluate(input => window.agent47.workspaceCapture(input), { tabId: state.activeId, taskId: tasks[0].id });
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const wc = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL() === 'https://example.com/').webContents;
+    await wc.loadURL('https://example.com/away'); await wc.loadURL('https://example.com/');
+  });
+  const stale = await page.evaluate(async input => { try { await window.agent47.workspaceSendCapture(input); return ''; } catch (e) { return e.message; } }, { id: oldCapture.id, digest: oldCapture.digest, clientMessageId: crypto.randomUUID() });
+  if (!stale.includes('重新审阅')) throw new Error('Navigation away/back retained old capture authority');
   const capture = await page.evaluate(input => window.agent47.workspaceCapture(input), { tabId: state.activeId, taskId: tasks[0].id });
   await page.getByRole('button', { name: '停止网页', exact: true }).click();
   const error = await page.evaluate(async input => { try { await window.agent47.workspaceSendCapture(input); return ''; } catch (e) { return e.message; } }, { id: capture.id, digest: capture.digest, clientMessageId: crypto.randomUUID() });
@@ -52,6 +59,6 @@ try {
   await app.close(); app = undefined; await launch();
   const restored = await page.evaluate(() => window.agent47.workspaceView());
   if (!restored.tabs[0].paused || (await browser()).length) throw new Error('Restart unexpectedly reloaded a website');
-  await writeFile('.qa/web-native-results.json', JSON.stringify({ result: 'WEB_NATIVE_CONTEXT_OK', platform: process.platform, modelFixture: true, httpsResponseFixture: true, cases: ['open is not model send', 'capture excludes forms/hidden/scripts', 'bottom dock review + cancel', 'explicit send creates immutable follow-up', 'stop invalidates capture', 'refresh and restart-paused sessions'] }, null, 2));
+  await writeFile('.qa/web-native-results.json', JSON.stringify({ result: 'WEB_NATIVE_CONTEXT_OK', platform: process.platform, modelFixture: true, httpsResponseFixture: true, cases: ['open is not model send', 'capture excludes forms/hidden/scripts', 'bottom dock review + cancel', 'explicit send creates immutable follow-up', 'navigation away/back invalidates capture', 'stop invalidates capture', 'refresh and restart-paused sessions'] }, null, 2));
   console.log('WEB_NATIVE_CONTEXT_OK');
 } finally { if (app) await app.close(); clearTimeout(watchdog); }

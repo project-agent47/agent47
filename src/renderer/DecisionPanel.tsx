@@ -21,7 +21,7 @@ export function DecisionPanel({ task, busy, hostEnabled, run, supplement }: { ta
   if (task.status === 'awaiting_approval' && task.approval) return <ApprovalPanel key={`${task.id}:${task.approval.id}`} task={task} busy={busy} hostEnabled={hostEnabled} run={run} supplement={supplement} />;
   if (task.status === 'awaiting_reconciliation' || (task.status === 'cancelled' && task.unknownEffect)) return <section className="decision-panel" aria-label="检查执行结果">
     <div className="decision-heading"><ShieldCheck size={16} /><h2>工具执行结果未知</h2></div>
-    <div className="decision-body"><p>请先检查项目与系统的实际效果。继续不会重放原命令；已停止轮次仍保持停止。</p></div>
+    <div className="decision-body"><p>请先检查项目、系统或网页与远端数据的实际效果。继续不代表操作成功，也不会重放原操作；已停止轮次仍保持停止。</p></div>
     <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.resolveUnknown(task.id))}>我已检查，不重放并继续</button></div>
   </section>;
   return null;
