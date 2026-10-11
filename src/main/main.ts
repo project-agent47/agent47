@@ -77,6 +77,11 @@ async function boot(): Promise<void> {
   handle('workspace:system', value => workspace.systemOpen(idSchema.parse(value)));
   handle('workspace:layout', value => workspace.layout(value));
   handle('workspace:web', value => workspace.openWeb(z.string().url().max(2048).parse(value)));
+  handle('workspace:agent-grant', value => {
+    const input = z.object({ taskId: idSchema, tabId: idSchema, expectedURL: z.string().url().max(2048), mode: z.enum(['deny', 'read', 'ask', 'allow']) }).strict().parse(value);
+    const state = workspace.agentGrant(input.taskId, input.tabId, input.mode, input.expectedURL);
+    runtime.browserPermissionsChanged(input.taskId); return state;
+  });
   handle('workspace:capture', value => { const input = z.object({ tabId: idSchema, taskId: idSchema }).strict().parse(value); return workspace.capture(input.tabId, input.taskId); });
   handle('workspace:send-capture', value => {
     const input = z.object({ id: idSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), clientMessageId: idSchema }).strict().parse(value);
@@ -97,7 +102,9 @@ async function boot(): Promise<void> {
       changeTimer = setTimeout(() => { changeTimer = undefined; window?.webContents.send('tasks:changed'); }, 60);
     }
   };
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb });
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb,
+    browser: { tabs: id => workspace.browserTabs(id), read: (id, name, input, signal) => workspace.browserRead(id, name, input, signal),
+      prepare: (id, call) => workspace.browserPrepare(id, call), validate: (id, action) => workspace.browserValidate(id, action), execute: (id, action, signal) => workspace.browserExecute(id, action, signal) } });
   protocol.handle('agent47', request => {
     const parsed = new URL(request.url);
     if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });

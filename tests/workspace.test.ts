@@ -7,13 +7,63 @@ import { TaskStore } from '../src/core/store';
 const { picker, opener } = vi.hoisted(() => ({ picker: vi.fn(), opener: vi.fn().mockResolvedValue('') }));
 vi.mock('electron', () => ({ BrowserWindow: class {}, WebContentsView: class {}, session: {}, dialog: { showOpenDialog: picker }, shell: { openPath: opener } }));
 import { Workspace } from '../src/main/workspace';
+import { browserSnapshotScript } from '../src/shared/browser-tools';
 let root: string, store: TaskStore, workspace: Workspace;
+async function browserSetup() {
+  const taskId = randomUUID(), now = new Date().toISOString();
+  store.save({ id: taskId, goal: 'Browser unit', skill: 'general', status: 'completed', createdAt: now, updatedAt: now, steps: 0, events: [], artifacts: [], messages: [], pending: [] });
+  const tab = (await workspace.openWeb('https://example.com/')).tabs[0];
+  let url = tab.url!;
+  const execute = vi.fn(async (_world: number, sources: { code: string }[]) => sources[0].code === browserSnapshotScript
+    ? { title: 'Unit', elements: [{ ref: 'e0', tag: 'button', role: '', name: 'Test', type: '', href: '', disabled: false, readOnly: false }] }
+    : sources[0].code.includes('dispatched: true') ? { dispatched: true, verifiedOutcome: false } : { title: 'Unit', content: 'UNTRUSTED_PAGE_EVIDENCE', truncated: false });
+  const wc = { id: 24, getURL: () => url, isDestroyed: () => false, isLoading: () => false, executeJavaScriptInIsolatedWorld: execute, loadURL: async (next: string) => { url = next; } };
+  (workspace as unknown as { views: Map<string, unknown> }).views.set(tab.id, { webContents: wc });
+  return { taskId, tab, execute, wc, setURL: (next: string) => { url = next; } };
+}
 beforeEach(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), 'a47-workspace-unit-')));
   store = new TaskStore(join(root, 'tasks.db')); workspace = new Workspace(join(root, 'workspace.json'), store, join(root, 'artifacts'), () => undefined);
   await workspace.start(); opener.mockClear();
 });
 afterEach(() => store.close());
+it('requires explicit conversation/tab/origin authorization and does not inherit user browsing', async () => {
+  const { taskId, tab } = await browserSetup();
+  expect(workspace.browserTabs(taskId)).toEqual([]);
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal)).rejects.toThrow('授权');
+  workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  expect(workspace.browserTabs(taskId)).toHaveLength(1);
+  const otherId = randomUUID(), prior = store.get(taskId); store.save({ ...prior, id: otherId });
+  expect(workspace.browserTabs(otherId)).toEqual([]);
+  expect(() => workspace.agentGrant(taskId, tab.id, 'allow', 'https://example.com/old')).toThrow('变化');
+});
+it('binds action approvals to fresh refs, URL, exact payload and revocable grant generation', async () => {
+  const { taskId, tab, setURL } = await browserSetup();
+  workspace.agentGrant(taskId, tab.id, 'ask', tab.url!);
+  const snapshot = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as { snapshotId: string };
+  const action = await workspace.browserPrepare(taskId, { toolCallId: 'click-1', toolName: 'browserClick', input: { tabId: tab.id, snapshotId: snapshot.snapshotId, ref: 'e0' } });
+  expect(workspace.browserValidate(taskId, action)).toBe(false);
+  action.content += 'changed'; expect(() => workspace.browserValidate(taskId, action)).toThrow('过期');
+  action.content = action.content.slice(0, -7);
+  setURL('https://example.com/next'); expect(() => workspace.browserValidate(taskId, action)).toThrow('变化');
+  setURL(tab.url!); workspace.agentGrant(taskId, tab.id, 'deny', tab.url!);
+  expect(() => workspace.browserValidate(taskId, action)).toThrow('授权');
+});
+it('readonly blocks interaction, same-origin navigation excludes cross-origin, and trusted dispatch invalidates refs', async () => {
+  const { taskId, tab, execute } = await browserSetup();
+  workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const read = () => workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as Promise<{ snapshotId: string }>;
+  let snapshot = await read();
+  const call = () => ({ toolCallId: 'click-1', toolName: 'browserClick', input: { tabId: tab.id, snapshotId: snapshot.snapshotId, ref: 'e0' } });
+  await expect(workspace.browserPrepare(taskId, call())).rejects.toThrow('授权');
+  await expect(workspace.browserRead(taskId, 'browserNavigate', { tabId: tab.id, url: 'https://other.example/' }, new AbortController().signal)).rejects.toThrow('跨站');
+  workspace.agentGrant(taskId, tab.id, 'allow', tab.url!); snapshot = await read();
+  const action = await workspace.browserPrepare(taskId, call());
+  expect(workspace.browserValidate(taskId, action)).toBe(true);
+  action.state = 'approved';
+  expect(await workspace.browserExecute(taskId, action, new AbortController().signal)).toMatchObject({ dispatched: true, verifiedOutcome: false });
+  expect(execute).toHaveBeenCalled(); expect(() => workspace.browserValidate(taskId, action)).toThrow('过期');
+});
 async function importFile(name: string, content: string | Buffer) {
   const path = join(root, name); await writeFile(path, content); picker.mockResolvedValue({ canceled: false, filePaths: [path] });
   return workspace.importFile();

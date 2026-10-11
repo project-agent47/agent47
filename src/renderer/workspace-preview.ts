@@ -9,6 +9,12 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
   state.visible = true; return clone();
 }
 export const previewWorkspace = {
+  agentGrant: async (tabId: string, conversationId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => {
+    const tab = state.tabs.find(t => t.id === tabId); if (!tab?.url) throw new Error('请选择网页。');
+    tab.agentGrants = (tab.agentGrants ?? []).filter(g => g.conversationId !== conversationId);
+    if (mode !== 'deny') tab.agentGrants.push({ conversationId, origin: new URL(tab.url).origin, mode });
+    return clone();
+  },
   view: async () => clone(),
   web: async (value: string) => {
     const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password) throw new Error('请使用公共 HTTPS 网页。');

@@ -42,6 +42,11 @@ let previewRetention: 0 | 7 | 30 | 90 = 0;
 const pageCaptures = new Map<string, PageCapture>();
 const previewBridge: AgentBridge = {
   preview: true,
+  workspaceAgentGrant: async input => {
+    const state = await previewWorkspace.view(), tab = state.tabs.find(t => t.id === input.tabId), task = samples.find(t => t.id === input.taskId);
+    if (!tab || !task || tab.kind !== 'web') throw new Error('请选择对话和网页。');
+    return previewWorkspace.agentGrant(tab.id, task.conversationId ?? task.id, input.mode);
+  },
   workspaceView: previewWorkspace.view,
   workspaceOpen: input => previewWorkspace.open(input, samples),
   workspaceImport: previewWorkspace.import,

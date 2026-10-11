@@ -1,4 +1,22 @@
 import { test, expect } from '@playwright/test';
+test('web Agent grants use the bottom dock and can be revoked without another message', async ({ page }) => {
+  await page.goto('/');
+  await page.getByText('解释任务审批与固定 workflow 有什么区别', { exact: true }).first().click();
+  await page.getByRole('button', { name: /^工作区/ }).click();
+  await page.getByLabel('公共 HTTPS 网页地址').fill('https://example.com/');
+  await page.getByRole('button', { name: '打开网页', exact: true }).click();
+  const permission = page.getByLabel('当前网页 Agent 权限');
+  await expect(permission).toHaveValue('deny');
+  await permission.selectOption('allow');
+  await expect(page.getByLabel('授权确认')).toContainText('可能发布、提交或改变远端数据');
+  await page.getByRole('button', { name: '取消', exact: true }).click();
+  await expect(permission).toHaveValue('deny');
+  await permission.selectOption('read');
+  await page.getByRole('button', { name: '确认网页授权', exact: true }).click();
+  await expect(permission).toHaveValue('read');
+  await permission.selectOption('deny');
+  await expect(permission).toHaveValue('deny');
+});
 test('home controls, filters, folder grant, mode guidance, create and stop', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByLabel('开始任务', { exact: true })).toBeDisabled();

@@ -20,8 +20,8 @@ export function DecisionPanel({ task, busy, hostEnabled, run, supplement }: { ta
   if (task.status === 'awaiting_input' && task.question?.questions) return <QuestionForm key={`${task.id}:${task.question.id}:${task.question.digest}`} task={task} busy={busy} run={run} supplement={supplement} />;
   if (task.status === 'awaiting_approval' && task.approval) return <ApprovalPanel key={`${task.id}:${task.approval.id}`} task={task} busy={busy} hostEnabled={hostEnabled} run={run} supplement={supplement} />;
   if (task.status === 'awaiting_reconciliation' || (task.status === 'cancelled' && task.unknownEffect)) return <section className="decision-panel" aria-label="检查执行结果">
-    <div className="decision-heading"><ShieldCheck size={16} /><h2>主机执行结果未知</h2></div>
-    <div className="decision-body"><p>请先检查项目与系统的实际效果。继续不会重放原命令；已停止轮次仍保持停止。</p></div>
+    <div className="decision-heading"><ShieldCheck size={16} /><h2>工具执行结果未知</h2></div>
+    <div className="decision-body"><p>请先检查项目、系统或网页与远端数据的实际效果。继续不代表操作成功，也不会重放原操作；已停止轮次仍保持停止。</p></div>
     <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.resolveUnknown(task.id))}>我已检查，不重放并继续</button></div>
   </section>;
   return null;
@@ -109,27 +109,28 @@ function QuestionForm({ task, busy, run, supplement }: { task: TaskView; busy: b
 }
 
 function ApprovalPanel({ task, busy, hostEnabled, run, supplement }: { task: TaskView; busy: boolean; hostEnabled: boolean; run: Run; supplement: () => void }) {
-  const action = task.approval!, host = ['shell', 'code'].includes(action.kind ?? '');
+  const action = task.approval!, host = ['shell', 'code'].includes(action.kind ?? ''), browser = action.kind === 'browser';
   const [scope, setScope] = useState(false), [reason, setReason] = useState('');
   const allow = (approve: boolean, scoped = false) => void run(() => bridge.decide({ taskId: task.id, approvalId: action.id, digest: action.digest, approve,
     ...(scoped ? { scope: host ? 'host' as const : 'files' as const } : {}), ...(!approve && reason.trim() ? { reason: reason.trim() } : {}) }));
-  const title = action.kind === 'project_write' ? '修改项目文件' : action.kind === 'directory' ? '创建项目目录' : host ? '执行本机工具' : '创建一份成果文件';
+  const title = browser ? '操作网页' : action.kind === 'project_write' ? '修改项目文件' : action.kind === 'directory' ? '创建项目目录' : host ? '执行本机工具' : '创建一份成果文件';
   const expiry = Date.parse(action.expiresAt) <= Date.now();
   return <section className="decision-panel approval-decision" aria-label="确认工具操作">
     <div className="decision-heading"><ShieldCheck size={16} /><h2>{title}</h2><span>仅绑定当前内容 · {expiry ? '已过期，请停止后重新提出' : '一次性确认'}</span></div>
     <div className="decision-body">
       <p className="decision-target"><strong>{action.name}</strong>{action.root && <span>目录：{action.root}{action.payload?.cwd ? ` · cwd ${action.payload.cwd}` : ''}</span>}</p>
       {host && <p className="context-note">不是安全沙箱，可访问本机文件与网络；文件快照不覆盖这些改动。</p>}
+      {browser && <p className="context-note">仅当前网页元素与内容；可能改变远端数据，文件快照不能撤销。执行后仍需读取页面验证结果。</p>}
       {host && <pre className="decision-code">{action.content}</pre>}
-      {!host && <details className="decision-content"><summary>查看完整内容 · {new TextEncoder().encode(action.content).length} B · {action.digest.slice(0, 12)}</summary><pre>{action.content}</pre></details>}
+      {!host && <details open={browser} className="decision-content"><summary>查看完整内容 · {new TextEncoder().encode(action.content).length} B · {action.digest.slice(0, 12)}</summary><pre>{action.content}</pre></details>}
       {action.before !== undefined && <details className="decision-content"><summary>修改前内容</summary><pre>{action.before}</pre></details>}
       <details className="decision-content"><summary>拒绝原因（可选）</summary><textarea aria-label="拒绝原因" value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={2000} disabled={busy} /></details>
       {scope && <div className="scope-review"><strong>授权范围：本次对话及其后续执行轮次</strong><p>{host ? '允许 Shell / JavaScript 以你的本机用户权限执行，不再逐命令询问。它不是项目目录沙箱；可能修改目录外文件或访问网络。全局关闭本机执行会撤销此授权。' : '允许本次对话创建成果和修改已授权项目文件，不再逐文件询问；项目修改前自动快照，外部改动仍受保护。'}</p></div>}
     </div>
-    <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={() => allow(false)}><X size={14} />{host ? '拒绝执行' : '拒绝写入'}</button>
-      {!host && action.kind !== 'directory' && <button className="text-button" disabled={busy} onClick={() => void run(async () => { await bridge.workspaceOpen({ kind: 'proposal', taskId: task.id, approvalId: action.id, digest: action.digest }); })}>在工作区预览</button>}
+    <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={() => allow(false)}><X size={14} />{host || browser ? '拒绝执行' : '拒绝写入'}</button>
+      {!host && !browser && action.kind !== 'directory' && <button className="text-button" disabled={busy} onClick={() => void run(async () => { await bridge.workspaceOpen({ kind: 'proposal', taskId: task.id, approvalId: action.id, digest: action.digest }); })}>在工作区预览</button>}
       <button className="text-button" disabled={busy} onClick={supplement}>补充要求</button><span className="decision-spacer" />
-      <button className="secondary small-button" disabled={busy || expiry || (host && !hostEnabled)} onClick={() => setScope(!scope)}>{scope ? '收起范围授权' : '按范围授权本次对话…'}</button>
+      {!browser && <button className="secondary small-button" disabled={busy || expiry || (host && !hostEnabled)} onClick={() => setScope(!scope)}>{scope ? '收起范围授权' : '按范围授权本次对话…'}</button>}
       <button className="primary small-button" disabled={busy || expiry || (host && !hostEnabled)} onClick={() => allow(true, scope)}><Check size={14} />{scope ? '确认范围并批准' : action.kind === 'project_write' ? '批准写入' : action.kind ? '批准执行' : '批准创建'}</button>
     </div>
   </section>;

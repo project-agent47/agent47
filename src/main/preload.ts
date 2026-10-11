@@ -3,6 +3,7 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  workspaceAgentGrant: input => ipcRenderer.invoke('workspace:agent-grant', input),
   workspaceView: () => ipcRenderer.invoke('workspace:view'),
   workspaceOpen: input => ipcRenderer.invoke('workspace:open', input),
   workspaceImport: () => ipcRenderer.invoke('workspace:import'),

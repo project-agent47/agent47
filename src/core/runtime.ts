@@ -11,6 +11,8 @@ import { projectedMessages, compactionCut, estimateTokens } from './context';
 import type { ModelContext, ModelStep } from './model';
 import type { FileSnapshots } from './snapshots';
 import { relative, isAbsolute, sep, resolve } from 'node:path';
+import { browserReadNames, browserEffectNames } from '../shared/browser-tools';
+import type { Approval } from '../shared/contracts';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
@@ -18,6 +20,13 @@ export interface RuntimeServices {
   contextThreshold?: number;
   fileMode?: () => 'snapshot' | 'ask'; snapshots?: FileSnapshots;
   readWeb?: (url: string, origins: string[], signal: AbortSignal) => Promise<unknown>;
+  browser?: {
+    tabs(taskId: string): unknown[];
+    read(taskId: string, name: string, input: unknown, signal: AbortSignal): Promise<unknown>;
+    prepare(taskId: string, call: ToolCall): Promise<Approval>;
+    validate(taskId: string, action: Approval): boolean;
+    execute(taskId: string, action: Approval, signal: AbortSignal): Promise<unknown>;
+  };
 }
 
 const terminal = new Set(['completed', 'failed', 'cancelled']);
@@ -56,7 +65,7 @@ export class TaskRuntime {
       if (changedUsage) this.save(task);
       if (task.status === 'running') {
         task.status = task.effectStarted ? 'awaiting_reconciliation' : 'queued';
-        this.event(task, 'system', task.effectStarted ? '主机工具执行结果未知。请检查实际效果后确认，不会自动重放命令。' : '应用已重启，从已保存的检查点继续。'); this.save(task);
+        this.event(task, 'system', task.effectStarted ? '工具执行结果未知。请检查本机或网页实际效果后确认，不会自动重放操作。' : '应用已重启，从已保存的检查点继续。'); this.save(task);
       }
     }
     this.kick();
@@ -148,6 +157,14 @@ export class TaskRuntime {
   setWebOrigins(id: string, origins: string[]): void {
     const task = this.store.get(id); task.webOrigins = [...new Set(origins)]; this.save(task);
   }
+  browserPermissionsChanged(id: string): void {
+    const task = this.store.get(id);
+    if (task.status === 'awaiting_approval' && task.approval?.kind === 'browser') {
+      // The broker invalidates the old snapshot/generation. Resume to produce a
+      // stale-intent result, not silently approve it under the new scope.
+      task.status = 'queued'; this.save(task); this.kick();
+    }
+  }
   private questionFor(task: TaskRecord, call: ToolCall): UserQuestion {
     const { questions, legacy } = parseQuestions(call.input);
     return { id: call.toolCallId, text: questions.map(q => q.prompt).join('\n'), questions, legacy, revision: 1,
@@ -219,9 +236,9 @@ export class TaskRuntime {
   resolveUnknown(id: string): void {
     const task = this.store.get(id);
     if (!['awaiting_reconciliation', 'cancelled'].includes(task.status) || !task.effectStarted || task.pending[0]?.toolCallId !== task.effectStarted) throw new Error('No unknown execution');
-    this.toolResult(task, task.pending[0], 'Previous host execution outcome is unknown. User inspected it. Never replay it automatically.', true);
+    this.toolResult(task, task.pending[0], 'Previous execution outcome is unknown. User inspected the effects; this does not verify success. Never replay the operation automatically.', true);
     task.effectStarted = undefined; if (task.status !== 'cancelled') task.status = 'queued';
-    this.event(task, 'system', '已人工检查未知效果，原命令不会重放。'); this.save(task); this.kick();
+    this.event(task, 'system', '已人工检查未知效果，不代表操作成功；原操作不会重放。'); this.save(task); this.kick();
   }
   private lockProject(task: TaskRecord): string {
     if (!task.root || [...this.restoringRoots].some(root => overlappingRoots(root, task.root!)) ||
@@ -329,7 +346,7 @@ export class TaskRuntime {
     if (reason && reason.length > 2000) throw new Error('Invalid denial reason');
     if (scope) {
       if (!approve || (scope === 'host' && (!['shell', 'code'].includes(action.kind ?? '') || !task.root || !this.services.hostEnabled?.())) ||
-        (scope === 'files' && ['shell', 'code'].includes(action.kind ?? ''))) throw new Error('请检查授权范围与工具设置。');
+        (scope === 'files' && ['shell', 'code', 'browser'].includes(action.kind ?? ''))) throw new Error('请检查授权范围与工具设置。');
       if (scope === 'files' && !this.services.snapshots) throw new Error('Snapshot service unavailable');
       if (scope === 'host') task.hostMode = 'allow'; else task.fileMode = 'snapshot';
       this.event(task, 'system', scope === 'host' ? '用户授权本次对话本机执行，免重复确认；不是安全沙箱。' : '用户授权本次对话文件自动快照，免逐文件确认。');
@@ -381,6 +398,7 @@ export class TaskRuntime {
     const context: ModelContext = {
       purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
       catalog: JSON.stringify(this.services.skills?.catalog() ?? []), webOrigins: task.webOrigins ?? [],
+      browserTabs: this.services.browser?.tabs(task.id) ?? [],
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
         if (purpose === 'turn') { draft[kind] = (draft[kind] + text).slice(0, 1_000_000); this.changed(); }
@@ -446,6 +464,37 @@ export class TaskRuntime {
             try {
               task.question = this.questionFor(task, call); task.status = 'awaiting_input'; this.save(task); return;
             } catch { this.toolResult(task, call, 'Invalid question', true); this.save(task); continue; }
+          }
+          if (browserEffectNames.has(call.toolName)) {
+            const browser = this.services.browser;
+            try {
+              if (!browser) throw new Error('Browser tools unavailable');
+              if (task.approval?.id !== call.toolCallId) {
+                const action = await browser.prepare(id, call);
+                task = this.store.get(id);
+                if (controller.signal.aborted || task.status === 'cancelled' || this.stopped) return;
+                task.approval = action; this.save(task);
+              }
+              const action = task.approval!;
+              if (action.state === 'denied') { this.toolResult(task, call, 'User denied browser action. Do not retry or use other tools to bypass.', true); this.save(task); continue; }
+              const trusted = browser.validate(id, action);
+              if (trusted && action.state === 'pending') { action.state = 'approved'; this.save(task); }
+              if (action.state !== 'approved') { task.status = 'awaiting_approval'; this.save(task); return; }
+              // Conservative durable dispatch fence. Never auto-replay a remote effect.
+              task.effectStarted = call.toolCallId; this.save(task);
+              const value = await browser.execute(id, action, controller.signal);
+              if (this.stopped) return;
+              task = this.store.get(id); task.effectStarted = undefined; task.approval!.state = 'applied';
+              this.toolResult(task, call, value);
+              this.event(task, 'tool', `${call.toolName} 已派发；业务效果需重新读取验证。`); this.save(task);
+              if (controller.signal.aborted) return;
+            } catch (error) {
+              task = this.store.get(id);
+              if (task.effectStarted) { task.status = task.status === 'cancelled' ? 'cancelled' : 'awaiting_reconciliation'; this.save(task); return; }
+              if (controller.signal.aborted || this.stopped) return;
+              this.toolResult(task, call, (error as Error).message, true); this.save(task);
+            }
+            continue;
           }
           if (effectNames.has(call.toolName)) {
             if (task.approval?.id !== call.toolCallId) {
@@ -523,7 +572,10 @@ export class TaskRuntime {
           } else {
             try {
               let value: unknown;
-              if (call.toolName === 'readWeb') {
+              if (browserReadNames.has(call.toolName)) {
+                if (!this.services.browser) throw new Error('Browser tools unavailable');
+                value = await this.services.browser.read(id, call.toolName, call.input, controller.signal);
+              } else if (call.toolName === 'readWeb') {
                 const { url } = z.object({ url: z.string().url().max(2048) }).strict().parse(call.input);
                 if (!this.services.readWeb) throw new Error('Web reader unavailable');
                 value = await this.services.readWeb(url, task.webOrigins ?? [], controller.signal);

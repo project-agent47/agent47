@@ -10,8 +10,8 @@ class DocumentBoundary extends Component<{ children: ReactNode; content: string 
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? <div className="document-markdown"><p>编辑器加载失败，暂以纯文本查看。关闭后重新打开可重试。</p><pre>{this.props.content}</pre></div> : this.props.children; }
 }
-export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
-  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void }) {
+export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
+  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void }) {
   const tab = state.tabs.find(t => t.id === state.activeId), box = useRef<HTMLDivElement>(null);
   const [raw, setRaw] = useState(false), [draftWidth, setDraftWidth] = useState(state.width);
   const [url, setURL] = useState('');
@@ -50,7 +50,7 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
       <button role="tab" aria-selected={tab?.id === t.id} title={t.name} onClick={() => mutate({ activeId: t.id })}>{t.name}</button>
       <button className="icon-button" aria-label={`关闭标签：${t.name}`} onClick={() => mutate({ closeId: t.id })}><X size={12} /></button></div>)}</div>
     {tab ? <>
-      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览，未授权 Agent 操作页面' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
+      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
         {['html', 'markdown'].includes(tab.kind) && <button className="text-button" onClick={() => setRaw(!raw)}>{raw ? '查看渲染' : '查看源码'}</button>}
         {['html', 'web'].includes(tab.kind) && <button className="text-button" disabled={tab.paused} onClick={() => mutate({ pauseId: tab.id })}>{tab.paused ? '已停止，刷新恢复' : tab.kind === 'web' ? '停止网页' : '停止 HTML 运行'}</button>}
         {tab.kind === 'web' && <button className="text-button" aria-label="将页面内容交给 Agent" disabled={!canSendPage || !!tab.paused || blocked} onClick={() => sendPage(tab.id)}>发送页面摘录</button>}
@@ -58,7 +58,11 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
         <button className="icon-button" aria-label="标签左移" onClick={() => mutate({ moveId: tab.id, direction: -1 })}><ArrowLeft size={14} /></button>
         <button className="icon-button" aria-label="标签右移" onClick={() => mutate({ moveId: tab.id, direction: 1 })}><ArrowRight size={14} /></button></div>
       {tab.kind === 'html' && !raw && <p className="workspace-note">离线隔离渲染；外网、相对资源、弹窗与表单提交不开放。{bridge.preview && '预览关闭脚本。'}</p>}
-      {tab.kind === 'web' && <p className="workspace-note"><span className="workspace-url" title={tab.url}>{tab.url}</span>{tab.status ?? '独立临时会话'} · 不自动入模，Agent 不操作页面。{!canSendPage && '选择对话并完成当前决定后可发送摘录。'}</p>}
+      {tab.kind === 'web' && <div className="workspace-note"><span className="workspace-url" title={tab.url}>{tab.url}</span>
+        <label>Agent 权限 <select aria-label="当前网页 Agent 权限" disabled={!conversationId || !!tab.paused || blocked} value={tab.agentGrants?.find(g => g.conversationId === conversationId)?.mode ?? 'deny'} onChange={e => grantPage(tab.id, e.target.value as 'deny' | 'read' | 'ask' | 'allow')}>
+          <option value="deny">未授权</option><option value="read">读取与同站导航</option><option value="ask">交互逐次确认</option><option value="allow">可信交互免确认</option>
+        </select></label>
+        <span> · 本次对话／此 Tab／此站点，重启失效。</span>{!canSendPage && '选择对话并完成当前决定后可发送摘录。'}</div>}
       <div className="workspace-body" ref={box}>
         {raw || tab.kind === 'code' ? <DocumentBoundary key={`${tab.id}:${tab.sha256}`} content={tab.content ?? ''}><Suspense fallback={<p className="workspace-note">正在加载只读编辑器…</p>}><CodeViewer content={tab.content ?? ''} name={tab.name} theme={theme} /></Suspense></DocumentBoundary>
           : tab.kind === 'markdown' ? <div className="document-markdown"><Markdown>{tab.content ?? ''}</Markdown></div>
