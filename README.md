@@ -25,18 +25,19 @@ npm run smoke:model  # real coding-agent API test; needs an approved key/transpo
 npm run smoke:electron
 npm run test:desktop:live # real DeepSeek desktop acceptance, approved proxy required
 npm run test:capabilities:live # real streaming, skills, edits, Node/Shell and compaction
+npm run test:permissions:live # real zero-click file batch, nested directories, snapshot restore and scoped host trust
 ```
 
 The Electron smoke script uses a deterministic model fixture and a temporary user-data directory. On a headless Linux CI host use `xvfb-run -a npm run smoke:electron`; that harness passes `--no-sandbox` only for the host test. Production app configuration keeps renderer sandboxing enabled.
 
 ## What is implemented
 
-- Rebuilt task center, conversation, exact-content approval, artifact library, capability disclosure and settings.
+- Rebuilt task center, conversation, visible tool-permission controls, optional exact-content approval, artifact library, capability disclosure and settings.
 - AI SDK `ToolLoopAgent.stream()`, separate provider reasoning, safe GFM Markdown and supplier input/output/cache usage (no billing or price estimates).
 - Multi-run conversations, essential-input questions, durable steering/follow-up queues and immutable finished runs.
-- Bounded selected-folder reads, approved project creation/editing with original hashes, and app-owned artifact creation.
+- Bounded selected-folder reads, nested directory creation, hash-checked project writes/edits and app-owned artifacts. New tasks default to project authorization + automatic write-before snapshots, not per-file confirmation; manual review remains available.
 - Reviewed `SKILL.md` text-bundle import, explicit enable/disable, metadata catalog and on-demand instructions/references/scripts. No automatic install or script execution.
-- Optional approved host Shell and JavaScript using Electron's bundled Node utility process. **Not an OS security sandbox**; disabled by default, every exact command/code requires approval, no application secret/proxy environment is inherited.
+- Optional host Shell and JavaScript using Electron's bundled Node utility process. **Not an OS security sandbox**; a visible Settings switch enables execution, then the conversation policy chooses exact-command review or explicitly trusted scoped execution. Application secret/proxy environment is not inherited.
 - Automatic context summaries at safe closed-turn boundaries; full raw history remains stored and summary calls appear in token usage.
 - SQLite task/message/action checkpoints, serial queue, restart recovery and cancellation.
 - Isolated renderer/preload/main architecture; no unauthenticated HTTP API.
@@ -61,6 +62,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Agent framework decision](docs/redesign/agent-framework-decision.md)
 - [Real DeepSeek desktop E2E](docs/redesign/deepseek-desktop-e2e.md)
 - [Conversation, tools, skills and context increment](docs/redesign/conversation-tools-skills.md)
+- [Simplified permissions, directories and recoverable snapshots](docs/redesign/permissions-and-snapshots.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

@@ -20,6 +20,8 @@ const bridge: AgentBridge = {
   setSkill: input => ipcRenderer.invoke('skills:set', input),
   executionSettings: () => ipcRenderer.invoke('execution:view'),
   setExecutionSettings: input => ipcRenderer.invoke('execution:set', input),
+  setTaskPermissions: input => ipcRenderer.invoke('tasks:permissions', input),
+  restoreFile: input => ipcRenderer.invoke('tasks:restore', input),
   onChange: callback => {
     const listener = () => callback();
     ipcRenderer.on('tasks:changed', listener);

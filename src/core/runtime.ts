@@ -8,11 +8,13 @@ import { z } from 'zod';
 import { effectNames, prepareEffect, applyProjectWrite, effectDigest, type HostExecutor } from './effects';
 import { projectedMessages, compactionCut, estimateTokens } from './context';
 import type { ModelContext, ModelStep } from './model';
+import type { FileSnapshots } from './snapshots';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
   skills?: { catalog(): unknown[]; load(id: string): unknown; read(id: string, path: string): Promise<unknown> };
   contextThreshold?: number;
+  fileMode?: () => 'snapshot' | 'ask'; snapshots?: FileSnapshots;
 }
 
 const terminal = new Set(['completed', 'failed', 'cancelled']);
@@ -21,6 +23,7 @@ export class TaskRuntime {
   private draining = false;
   private stopped = false;
   private drafts = new Map<string, { text: string; reasoning: string }>();
+  private restoringRoots = new Set<string>();
   constructor(readonly store: TaskStore, private model: ModelDriver, private artifactRoot: string, private changed: () => void = () => {}, private services: RuntimeServices = {}) {}
   start(): void {
     for (const task of this.store.list()) {
@@ -35,13 +38,15 @@ export class TaskRuntime {
     this.kick();
   }
   list(): TaskView[] { return this.store.list().map(task => ({ ...publicTask(task), draft: this.drafts.get(task.id) })); }
-  create(goal: string, skill: SkillId, root?: string): TaskView {
+  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask'): TaskView {
+    if (root && this.restoringRoots.has(root)) throw new Error('请等待文件快照恢复完成。');
     if (!goal.trim() || goal.length > 12000) throw new Error('Task goal must contain 1–12000 characters');
     const now = new Date().toISOString();
     const task: TaskRecord = {
       id: randomUUID(), goal: goal.trim(), skill, root, status: 'queued', createdAt: now, updatedAt: now,
       events: [], artifacts: [], steps: 0, pending: [], messages: [{ role: 'user', content: goal.trim() }],
-      usage: [], runNumber: 1, queuedInput: []
+      usage: [], runNumber: 1, queuedInput: [],
+      fileMode: fileMode ?? this.services.fileMode?.() ?? 'ask', hostMode: 'ask', fileChanges: []
     };
     this.event(task, 'user', task.goal); this.save(task); this.kick();
     return publicTask(task);
@@ -51,6 +56,7 @@ export class TaskRuntime {
     const prior = this.store.command(commandId);
     if (prior) return publicTask(this.store.get(prior));
     let task = this.store.get(id);
+    if (task.root && this.restoringRoots.has(task.root)) throw new Error('请等待文件快照恢复完成。');
     if (task.effectStarted) throw new Error('Inspect unknown host effects before continuing');
     if (terminal.has(task.status)) {
       const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
@@ -71,6 +77,32 @@ export class TaskRuntime {
     }
     this.store.saveCommand(commandId, task); this.changed(); this.kick(); return publicTask(task);
   }
+  setPermissions(id: string, fileMode: 'snapshot' | 'ask', hostMode: 'ask' | 'allow'): void {
+    const task = this.store.get(id);
+    if (hostMode === 'allow' && (!task.root || !this.services.hostEnabled?.())) throw new Error('请先选择项目目录，并在工具设置启用本机执行。');
+    if (fileMode === 'snapshot' && !this.services.snapshots) throw new Error('Snapshot service unavailable');
+    task.fileMode = fileMode; task.hostMode = hostMode;
+    this.event(task, 'system', `工具权限：文件 ${fileMode === 'snapshot' ? '自动备份并修改' : '逐次确认'}；本机执行 ${hostMode === 'allow' ? '本次对话免确认（非沙箱）' : '逐次确认'}。`);
+    if (task.status === 'awaiting_approval') task.status = 'queued';
+    this.save(task); this.kick();
+  }
+  async restoreFile(id: string, snapshotId: string): Promise<void> {
+    const task = this.store.get(id);
+    if (!task.root || this.restoringRoots.has(task.root) || !terminal.has(task.status) || task.effectStarted || this.active.has(id) ||
+      this.store.list().some(other => other.root === task.root && (!terminal.has(other.status) || other.effectStarted))) throw new Error('请先停止或完成此项目的所有任务，再恢复文件。');
+    const change = task.fileChanges?.find(item => item.id === snapshotId && item.state === 'saved');
+    if (!change || !this.services.snapshots) throw new Error('Snapshot not found');
+    this.restoringRoots.add(task.root);
+    try {
+      await this.services.snapshots.restore(id, snapshotId);
+      const current = this.store.get(id);
+      current.fileChanges!.find(item => item.id === snapshotId)!.state = 'restored';
+      this.event(current, 'system', `已恢复文件快照：${change.path}；对话历史未回退。`); this.save(current);
+      const latest = this.store.list().find(other => (other.conversationId ?? other.id) === (task.conversationId ?? task.id))!;
+      latest.messages.push({ role: 'user', content: `[Application notice: the user restored ${change.path} to before its recorded modification. Do not replay that action. Read the file again before proposing any new edit.]` });
+      this.save(latest);
+    } finally { this.restoringRoots.delete(task.root); }
+  }
   resolveUnknown(id: string): void {
     const task = this.store.get(id);
     if (!['awaiting_reconciliation', 'cancelled'].includes(task.status) || !task.effectStarted || task.pending[0]?.toolCallId !== task.effectStarted) throw new Error('No unknown execution');
@@ -87,7 +119,8 @@ export class TaskRuntime {
       id: randomUUID(), goal: text.trim(), skill: parent.skill, root: parent.root, status: 'queued',
       createdAt: now, updatedAt: now, events: structuredClone(parent.events), artifacts: [], steps: 0, pending: [], messages,
       conversationId: parent.conversationId ?? parent.id, goalId: parent.goalId ?? parent.id, parentRunId: parent.id,
-      runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? [])
+      runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? []),
+      fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: []
     };
     this.event(task, 'system', `开始第 ${task.runNumber} 轮执行；旧执行轮次保持不变。`);
     this.event(task, 'user', text.trim()); return task;
@@ -146,7 +179,7 @@ export class TaskRuntime {
     this.save(task);
     const draft = { text: '', reasoning: '' }; this.drafts.set(task.id, draft);
     const context: ModelContext = {
-      purpose, hostExecution: this.services.hostEnabled?.() ?? false,
+      purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
       catalog: JSON.stringify(this.services.skills?.catalog() ?? []),
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
@@ -213,15 +246,20 @@ export class TaskRuntime {
             if (task.approval?.id !== call.toolCallId) {
               try { task.approval = await prepareEffect(id, call, task.root, this.services.hostEnabled?.() ?? false); }
               catch (error) { this.toolResult(task, call, (error as Error).message, true); this.save(task); continue; }
-              task.status = 'awaiting_approval'; this.event(task, 'system', `等待审阅 ${task.approval.name}。`); this.save(task); return;
+              this.save(task);
             }
             const action = task.approval;
             if (action.state === 'denied') { this.toolResult(task, call, 'User denied this action. Respect denial.', true); this.save(task); continue; }
+            const autoFile = ['project_write', 'directory'].includes(action.kind ?? '') && task.fileMode === 'snapshot' && !!this.services.snapshots;
+            const autoHost = ['shell', 'code'].includes(action.kind ?? '') && task.hostMode === 'allow' && !!this.services.hostEnabled?.();
+            if (action.state === 'pending' && (autoFile || autoHost)) { action.state = 'approved'; this.save(task); }
             if (action.state !== 'approved') { task.status = 'awaiting_approval'; this.save(task); return; }
             if (effectDigest(id, action) !== action.digest) throw new Error('Approval payload changed');
             try {
               let value: unknown;
-              if (action.kind === 'project_write') value = await applyProjectWrite(id, action);
+              if (action.kind === 'project_write' || action.kind === 'directory') {
+                value = this.services.snapshots ? await this.services.snapshots.apply(id, action) : await applyProjectWrite(id, action);
+              }
               else {
                 if (!this.services.hostEnabled?.() || !this.services.executeHost) throw new Error('Host execution disabled');
                 task.effectStarted = call.toolCallId; this.save(task);
@@ -229,6 +267,10 @@ export class TaskRuntime {
               }
               if (this.stopped) return;
               task = this.store.get(id); task.effectStarted = undefined;
+              const change = value as { snapshotId?: string; path?: string };
+              if (change?.snapshotId && !task.fileChanges?.some(item => item.id === change.snapshotId)) {
+                task.fileChanges ??= []; task.fileChanges.push({ id: change.snapshotId, path: change.path!, state: 'saved' });
+              }
               if (task.approval) task.approval.state = 'applied';
               this.toolResult(task, call, value); this.event(task, 'tool', `${call.toolName} 已执行 · ${JSON.stringify(value).slice(0, 1000)}`); this.save(task);
               if (controller.signal.aborted) return;
@@ -243,10 +285,9 @@ export class TaskRuntime {
             if (task.approval?.id !== call.toolCallId) {
               try { task.approval = approvalFor(id, call.toolCallId, call.input); }
               catch { this.toolResult(task, call, 'Invalid artifact payload', true); this.save(task); continue; }
-              task.status = 'awaiting_approval';
-              this.event(task, 'system', `等待你审阅 ${task.approval.name} 的完整内容。`); this.save(task);
-              return;
+              this.save(task);
             }
+            if (task.approval.state === 'pending' && task.fileMode === 'snapshot') { task.approval.state = 'approved'; this.save(task); }
             if (task.approval.state === 'denied') {
               this.toolResult(task, call, 'User denied this write. Respect the denial.', true);
             } else if (task.approval.state === 'approved') {

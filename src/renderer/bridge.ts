@@ -27,6 +27,7 @@ const clone = <T,>(value: T): T => structuredClone(value);
 const emit = () => listeners.forEach(listener => listener());
 const provider: ProviderView = { baseURL: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4.1-flash', configured: false, secureStorage: false };
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
+let previewExecution = { hostExecution: false, fileMode: 'snapshot' as 'snapshot' | 'ask' };
 const previewBridge: AgentBridge = {
   preview: true,
   listTasks: async () => clone(samples),
@@ -34,7 +35,7 @@ const previewBridge: AgentBridge = {
     const at = new Date().toISOString();
     const task: TaskView = {
       id: crypto.randomUUID(), goal: input.goal, skill: input.skill, root: input.folderGrant ? '~/Projects/preview' : undefined,
-      status: 'running', createdAt: at, updatedAt: at, steps: 0, artifacts: [],
+      status: 'running', createdAt: at, updatedAt: at, steps: 0, artifacts: [], fileMode: previewExecution.fileMode, hostMode: 'ask',
       events: [{ id: crypto.randomUUID(), at, kind: 'user', text: input.goal }]
     };
     samples.unshift(task); emit();
@@ -66,8 +67,13 @@ const previewBridge: AgentBridge = {
   previewSkill: async () => { throw new Error('预览不读取本机 skill 包，请在桌面应用中导入。'); },
   installSkill: async () => { throw new Error('预览不安装 skill。'); },
   setSkill: async () => {},
-  executionSettings: async () => ({ hostExecution: false }),
-  setExecutionSettings: async () => { throw new Error('预览不启用本机执行。'); },
+  executionSettings: async () => clone(previewExecution),
+  setExecutionSettings: async input => { previewExecution = { hostExecution: input.hostExecution, fileMode: input.fileMode ?? previewExecution.fileMode }; emit(); },
+  setTaskPermissions: async input => {
+    const task = samples.find(t => t.id === input.taskId)!;
+    task.fileMode = input.fileMode; task.hostMode = input.hostMode; emit();
+  },
+  restoreFile: async () => { throw new Error('预览没有真实文件快照；请在桌面应用中恢复。'); },
   decide: async input => {
     const task = samples.find(t => t.id === input.taskId)!;
     if (!task.approval || task.approval.state !== 'pending') throw new Error('此审批已结束。');
@@ -76,7 +82,7 @@ const previewBridge: AgentBridge = {
     if (input.approve) task.artifacts.push({ id: task.approval.id, name: task.approval.name, content: task.approval.content, sha256: 'preview-only' });
     task.events.push({ id: crypto.randomUUID(), at: now, kind: 'assistant', text: input.approve ? '已将示例成果加入预览成果库。未写入任何真实文件。' : '已拒绝这次示例写入。没有创建文件。' }); emit();
   },
-  chooseFolder: async () => ({ id: 'preview-folder', path: '~/Projects/preview（示例目录）' }),
+  chooseFolder: async () => ({ id: 'preview-folder', path: '~/Projects/preview（示例目录）', fileMode: previewExecution.fileMode }),
   provider: async () => clone(provider),
   saveProvider: async () => { throw new Error('预览不接收或保存真实凭据。请在桌面应用中配置。'); },
   testProvider: async () => '交互预览不会请求模型。真实 API 验证结果请查看本轮交付说明。',

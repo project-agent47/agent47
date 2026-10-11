@@ -1,5 +1,7 @@
 # Architecture and workflow replacement
 
+This document retains the initial architecture baseline. Current file/host permission policy, nested directory tools and snapshot restoration are specified in [permissions-and-snapshots.md](permissions-and-snapshots.md); read consent alone does not automatically become write consent, and historical tasks retain manual review until explicitly changed.
+
 ## Data and process boundaries
 
 ```text

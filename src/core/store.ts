@@ -68,6 +68,7 @@ export function publicTask(task: TaskRecord): TaskView {
     conversationId: task.conversationId ?? task.id, goalId: task.goalId ?? task.id,
     parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
-    context: task.context, unknownEffect: Boolean(task.effectStarted)
+    context: task.context, unknownEffect: Boolean(task.effectStarted),
+    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? []
   };
 }

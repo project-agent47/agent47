@@ -15,12 +15,15 @@ await writeFile(join(project, 'large.txt'), `Critical exact identifier: ${secret
 await writeFile(join(skill, 'SKILL.md'), '---\nname: e2e-review\ndescription: Test project editing with a reference checklist\n---\nBefore editing, load references/check.md with readSkillFile. Read editable.txt and its SHA-256, then use editFile to replace OLD_47 with NEW_47. Every write still requires approval. Do not execute scripts automatically.');
 await writeFile(join(skill, 'references', 'check.md'), 'Evidence marker: SKILL_REFERENCE_OK_47. Mention this marker in the final reply after completing the requested edit.');
 const env = { ...process.env }; delete env.AGENT47_SMOKE; delete env.OPENCODE_API_TOKEN;
-let app, page;
+let app, page, manualConfigured = false;
 const report = { fixtureModel: false, pickerStub: true, platform: process.platform, cases: [] };
 async function launch() {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
   app.process().stderr.on('data', chunk => { for (const line of chunk.toString().split('\n')) if (line.startsWith('[model-diagnostic] ')) console.error(line); });
   page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page.on('dialog', dialog => dialog.accept());
+  // This regression intentionally exercises manual-review mode as well.
+  if (!manualConfigured) { await page.evaluate(() => window.agent47.setExecutionSettings({ hostExecution: false, fileMode: 'ask' })); manualConfigured = true; }
 }
 async function picker(path) { await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, path); }
 const tasks = () => page.evaluate(() => window.agent47.listTasks());

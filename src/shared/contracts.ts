@@ -2,11 +2,12 @@ export type TaskStatus = 'queued' | 'running' | 'awaiting_approval' | 'awaiting_
 export type SkillId = 'general' | 'review' | 'deliver';
 export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
-export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'shell' | 'code'; payload?: Record<string, unknown>; root?: string; before?: string }
+export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'directory' | 'shell' | 'code'; payload?: Record<string, unknown>; root?: string; before?: string }
 export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compaction'; state: 'pending' | 'reported' | 'partial' | 'unknown'; input?: number; output?: number; total?: number; cacheRead?: number; reasoning?: number; textDeltas?: number; reasoningDeltas?: number }
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
 export interface SkillImport { ticket: string; skill: SkillView; instructions: string }
-export interface ExecutionSettings { hostExecution: boolean }
+export interface ExecutionSettings { hostExecution: boolean; fileMode?: 'snapshot' | 'ask' }
+export interface FileChange { id: string; path: string; state: 'saved' | 'restored' }
 export interface TaskView {
   id: string; goal: string; skill: SkillId; root?: string; status: TaskStatus;
   createdAt: string; updatedAt: string; events: TaskEvent[]; artifacts: Artifact[];
@@ -16,11 +17,13 @@ export interface TaskView {
   question?: { id: string; text: string }; queuedInput?: { id: string; text: string; mode: 'steer' | 'followup' }[];
   context?: { compactions: number; estimatedTokens: number; keptFrom: number };
   unknownEffect?: boolean;
+  fileMode?: 'snapshot' | 'ask'; hostMode?: 'ask' | 'allow';
+  fileChanges?: FileChange[];
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
 export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string }
-export interface FolderGrant { id: string; path: string }
+export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
   preview: boolean;
   listTasks(): Promise<TaskView[]>;
@@ -40,6 +43,8 @@ export interface AgentBridge {
   setSkill(input: { id: string; enabled: boolean }): Promise<void>;
   executionSettings(): Promise<ExecutionSettings>;
   setExecutionSettings(input: ExecutionSettings): Promise<void>;
+  setTaskPermissions(input: { taskId: string; fileMode: 'snapshot' | 'ask'; hostMode: 'ask' | 'allow' }): Promise<void>;
+  restoreFile(input: { taskId: string; snapshotId: string }): Promise<void>;
   onChange(callback: () => void): () => void;
 }
 declare global { interface Window { agent47?: AgentBridge } }

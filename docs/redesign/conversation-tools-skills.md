@@ -1,5 +1,7 @@
 # Conversation, tools, skills and context increment
 
+The initial per-file approval and existing-parent-only restrictions described below are superseded by [the permission/snapshot corrective increment](permissions-and-snapshots.md). Current defaults allow explicitly authorized project edits with write-before snapshots; Shell trust is separately configurable. Historical acceptance evidence below remains evidence for its original commit, not the current permission UX.
+
 ## Scope change
 
 The owner removed bills, prices and budget-management products from scope. Only supplier-reported input/output/cache usage is collected. Tool/skill capability is the priority, not an accounting platform. The earlier budget design is historical and not the implementation contract.

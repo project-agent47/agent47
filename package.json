@@ -22,6 +22,7 @@
     "smoke:electron": "node scripts/smoke-electron.mjs",
     "test:desktop:live": "node scripts/e2e-desktop-live.mjs",
     "test:capabilities:live": "node scripts/e2e-capabilities-live.mjs",
+    "test:permissions:live": "node scripts/e2e-permissions-live.mjs",
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac"
   },

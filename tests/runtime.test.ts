@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, writeFile, symlink, readdir } from 'node:fs/promises';
+import { mkdtemp as createTemp, realpath, mkdir, readFile, writeFile, symlink, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+const mkdtemp = async (prefix: string) => realpath(await createTemp(prefix));
 import { join } from 'node:path';
 import { TaskRuntime } from '../src/core/runtime';
 import { TaskStore } from '../src/core/store';

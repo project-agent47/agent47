@@ -14,13 +14,14 @@ import type { ModelDriver } from '../core/model';
 import { modelTransport } from './transport';
 import { SkillRegistry } from './skills';
 import { executeHost } from './host';
+import { FileSnapshots } from '../core/snapshots';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 let window: BrowserWindow | undefined;
 let runtime: TaskRuntime;
-const grants = new Map<string, string>();
+const grants = new Map<string, { path: string; fileMode: 'snapshot' | 'ask' }>();
 const idSchema = z.string().uuid();
 const url = 'agent47://app/';
 
@@ -35,7 +36,7 @@ function handle(channel: string, operation: (value: unknown) => unknown): void {
       // Never send upstream model errors or secret values across IPC.
       console.warn(`[${channel}] failed`);
       const message = (error as Error).message;
-      const known = /^(Approval|Task not|Finished tasks|系统|切换|请填写|No folder|Folder permission)/.test(message);
+      const known = /^(Approval|Task not|Finished tasks|Snapshot conflict|请|系统|切换|No folder|Folder permission)/.test(message);
       throw new Error(known ? message : '操作未完成。请检查输入、权限与连接设置。');
     }
   });
@@ -62,6 +63,8 @@ async function boot(): Promise<void> {
   const store = new TaskStore(join(root, 'tasks.db'));
   const skills = new SkillRegistry(join(root, 'skills')); await skills.start();
   let hostExecution = JSON.parse(await readFile(join(root, 'execution.json'), 'utf8').catch(() => 'false')) === true;
+  let fileMode = z.enum(['snapshot', 'ask']).parse(JSON.parse(await readFile(join(root, 'file-mode.json'), 'utf8').catch(() => '"snapshot"')));
+  const snapshots = new FileSnapshots(join(root, 'snapshots'));
   let changeTimer: ReturnType<typeof setTimeout> | undefined;
   const changed = () => {
     if (!changeTimer) {
@@ -69,7 +72,7 @@ async function boot(): Promise<void> {
       changeTimer = setTimeout(() => { changeTimer = undefined; window?.webContents.send('tasks:changed'); }, 60);
     }
   };
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution });
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots });
   protocol.handle('agent47', request => {
     const parsed = new URL(request.url);
     if (parsed.hostname !== 'app') return new Response('Forbidden', { status: 403 });
@@ -86,7 +89,7 @@ async function boot(): Promise<void> {
     const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
     if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
     if (!providerView().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
-    return runtime.create(input.goal, input.skill, folder);
+    return runtime.create(input.goal, input.skill, folder?.path, folder?.fileMode);
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
   handle('tasks:send', value => {
@@ -105,11 +108,26 @@ async function boot(): Promise<void> {
     const input = z.object({ id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64), enabled: z.boolean() }).strict().parse(value);
     return skills.set(input.id, input.enabled);
   });
-  handle('execution:view', () => ({ hostExecution }));
+  handle('tasks:permissions', value => {
+    const input = z.object({ taskId: idSchema, fileMode: z.enum(['snapshot', 'ask']), hostMode: z.enum(['ask', 'allow']) }).strict().parse(value);
+    runtime.setPermissions(input.taskId, input.fileMode, input.hostMode);
+  });
+  handle('tasks:restore', value => {
+    const input = z.object({ taskId: idSchema, snapshotId: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(value);
+    return runtime.restoreFile(input.taskId, input.snapshotId);
+  });
+  handle('execution:view', () => ({ hostExecution, fileMode }));
   handle('execution:set', async value => {
-    const input = z.object({ hostExecution: z.boolean() }).strict().parse(value);
+    const input = z.object({ hostExecution: z.boolean(), fileMode: z.enum(['snapshot', 'ask']).optional() }).strict().parse(value);
     await writeFile(join(root, 'execution.json'), JSON.stringify(input.hostExecution), { mode: 0o600 });
     hostExecution = input.hostExecution;
+    if (!hostExecution) {
+      for (const task of store.list()) {
+        if (task.hostMode === 'allow') { task.hostMode = 'ask'; store.save(task); }
+      }
+    }
+    if (input.fileMode) { await writeFile(join(root, 'file-mode.json'), JSON.stringify(input.fileMode), { mode: 0o600 }); fileMode = input.fileMode; }
+    changed();
   });
   handle('tasks:decide', value => {
     const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean() }).strict().parse(value);
@@ -117,13 +135,13 @@ async function boot(): Promise<void> {
   });
   handle('folder:choose', async () => {
     const answer = await dialog.showOpenDialog(window!, {
-      title: '允许读取此目录（内容发送给模型）；修改与主机执行另需逐次审批',
-      buttonLabel: '授权读取此目录', properties: ['openDirectory']
+      title: fileMode === 'snapshot' ? '授权此项目的读取与文件修改（自动快照，可恢复）；Shell 另行授权' : '授权读取此项目；文件修改逐次确认',
+      buttonLabel: fileMode === 'snapshot' ? '授权项目读写' : '授权项目读取', properties: ['openDirectory']
     });
     if (answer.canceled || !answer.filePaths[0]) return;
     const path = await realpath(answer.filePaths[0]);
-    const id = randomUUID(); grants.set(id, path);
-    return { id, path };
+    const id = randomUUID(); grants.set(id, { path, fileMode });
+    return { id, path, fileMode };
   });
   handle('provider:view', providerView);
   handle('provider:save', value => {
