@@ -122,10 +122,35 @@ const previewBridge: AgentBridge = {
     task.status = 'cancelled';
     task.events.push({ id: crypto.randomUUID(), at: now, kind: 'system', text: '示例任务已停止。' }); emit();
   },
+  pauseTask: async id => {
+    const task = samples.find(t => t.id === id)!;
+    if (task.status === 'paused') return;
+    if (['completed', 'failed', 'cancelled', 'awaiting_reconciliation'].includes(task.status)) throw new Error('本轮不能暂停。');
+    clearTimeout(timers.get(id)); timers.delete(id);
+    task.pause = { reason: 'manual', at: new Date().toISOString(), detail: '预览已暂停；不执行真实工具。重启恢复仅由桌面版 SQLite 提供。',
+      resumeStatus: task.status === 'awaiting_input' || task.status === 'awaiting_approval' ? task.status : 'queued' };
+    task.status = 'paused'; emit();
+  },
+  resumeTask: async id => {
+    const task = samples.find(t => t.id === id)!;
+    if (task.status !== 'paused' || !task.pause) throw new Error('本轮未暂停。');
+    task.status = task.pause.resumeStatus; task.pause = undefined;
+    if (task.status === 'queued') {
+      task.status = 'running';
+      timers.set(id, setTimeout(() => {
+        if (task.status !== 'running') return;
+        task.status = 'completed'; task.steps++;
+        task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '同一轮次的暂停／继续交互示例完成，没有调用模型或真实工具。' });
+        for (const q of task.queuedInput ?? []) task.events.push({ id: q.id, at: now, kind: 'user', text: q.text });
+        task.queuedInput = []; timers.delete(id); emit();
+      }, 900));
+    }
+    emit();
+  },
   sendMessage: async input => {
     const parent = samples.find(t => t.id === input.taskId)!;
     parent.composerDraft = '';
-    if (['running', 'queued', 'awaiting_approval', 'awaiting_input'].includes(parent.status)) {
+    if (['running', 'queued', 'paused', 'awaiting_approval', 'awaiting_input'].includes(parent.status)) {
       parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode, materials: parent.materials?.filter(m => input.materialIds?.includes(m.id)) }); emit(); return clone(parent);
     }
     const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60), conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,

@@ -147,6 +147,8 @@ async function boot(): Promise<void> {
     for (const id of input.materialTickets ?? []) materialTickets.delete(id); return result;
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
+  handle('tasks:pause', value => runtime.pause(idSchema.parse(value)));
+  handle('tasks:resume', value => runtime.resume(idSchema.parse(value)));
   const materialBinding = z.object({ taskId: idSchema, materialId: idSchema }).strict();
   handle('materials:attach', async value => {
     const input = z.object({ taskId: idSchema, tabId: idSchema }).strict().parse(value);

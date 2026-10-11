@@ -14,6 +14,7 @@ export interface TaskRecord extends TaskView {
   queueAfterStep?: number;
   questionReceipts?: Record<string, string>;
   materialSnapshots?: Record<string, MaterialSnapshot>; authorizedMaterialIds?: string[];
+  progressGuard?: { input?: string; observation?: string; repeatedInputs: number; repeatedObservations: number; consecutiveErrors: number; reason?: 'repeated_tool' | 'errors' };
 }
 
 /** One process owns this database. Every checkpoint includes messages and action state. */
@@ -108,6 +109,7 @@ export function publicTask(task: TaskRecord): TaskView {
     conversationTitle: task.conversationTitle ?? task.goal.split('\n')[0].slice(0, 60), materials: task.materials ?? [],
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
     context: task.context, unknownEffect: Boolean(task.effectStarted),
-    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? [], composerDraft: task.composerDraft
+    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? [], composerDraft: task.composerDraft,
+    pause: task.pause, pauseRequested: task.pauseRequested, progress: task.progress
   };
 }
