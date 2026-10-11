@@ -115,6 +115,12 @@ it('stop cancels wait promptly even while a fixed page script is pending', async
   setTimeout(() => controller.abort(), 20);
   await expect(waiting).rejects.toThrow('Cancelled'); expect(Date.now() - start).toBeLessThan(1000);
 });
+it('a script deadline returns timed_out, never depends on fractional timer clock ordering', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  execute.mockImplementation(() => new Promise(() => {}));
+  const value = await workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 250 }, new AbortController().signal);
+  expect(value).toMatchObject({ outcome: 'timed_out', verifiedOutcome: false });
+});
 it('same URL navigation during extraction invalidates a read using document epoch', async () => {
   const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
   const epochs = (workspace as unknown as { pageEpoch: Map<string, number> }).pageEpoch;

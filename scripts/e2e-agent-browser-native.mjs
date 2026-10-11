@@ -76,7 +76,8 @@ try {
   await intent(taskId, 'browserWait', { tabId, condition: { kind: 'element', name: 'Save test note' }, timeoutMs: 1000 }); await completed(taskId);
   if ((await result(taskId)).value.outcome !== 'matched') throw new Error('Element name not observed');
   await intent(taskId, 'browserWait', { tabId, condition: { kind: 'text', text: 'PASSWORD_SECRET' }, timeoutMs: 250 }); await completed(taskId);
-  if ((await result(taskId)).value.outcome !== 'timed_out') throw new Error('Wait exposed password');
+  const privateWait = await result(taskId);
+  if (privateWait.type !== 'json' || privateWait.value.outcome !== 'timed_out') throw new Error('Password exclusion wait did not return timeout: ' + JSON.stringify(privateWait));
   await intent(taskId, 'browserWait', { tabId, condition: { kind: 'url', url: 'https://example.com/' }, timeoutMs: 250 }); await completed(taskId);
   if ((await result(taskId)).value.outcome !== 'matched') throw new Error('Exact URL not observed');
   await intent(taskId, 'browserWait', { tabId, condition: { kind: 'url', url: 'https://other.example/' }, timeoutMs: 250 }); await completed(taskId);

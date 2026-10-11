@@ -31,6 +31,9 @@ type SavedTab = z.infer<typeof tabSchema>;
 const stateSchema = z.object({ tabs: z.array(tabSchema).max(10), activeId: z.string().uuid().optional(), width: z.number().int().min(280).max(1000), visible: z.boolean() }).strict();
 const sensitive = /(^\.|^(credentials?|secrets?|id_rsa|id_ed25519)(\.|$)|\.(pem|key|p12|pfx|db|sqlite|sqlite3)$)/i;
 const systemTypes = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.rtf', '.odt', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
+class BrowserScriptTimeout extends Error {
+  constructor() { super('请检查页面：网页工具超时。'); }
+}
 
 export class Workspace {
   private state: z.infer<typeof stateSchema> = { tabs: [], width: 440, visible: false };
@@ -90,7 +93,7 @@ export class Workspace {
     let onAbort: (() => void) | undefined;
     if (signal?.aborted) throw new Error('Cancelled');
     try { return await Promise.race([wc.executeJavaScriptInIsolatedWorld(1002, [{ code }]), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error('请检查页面：网页工具超时。')), timeoutMs);
+      timer = setTimeout(() => reject(new BrowserScriptTimeout()), timeoutMs);
       if (signal) { onAbort = () => reject(new Error('Cancelled')); signal.addEventListener('abort', onAbort, { once: true }); }
     })]); }
     finally { clearTimeout(timer); if (signal && onAbort) signal.removeEventListener('abort', onAbort); }
@@ -106,7 +109,7 @@ export class Workspace {
       return now;
     };
     while (true) {
-      const { wc } = check(); let matched = false;
+      const { wc } = check(); let matched = false, timedOut = false;
       if (!wc.isLoading()) {
         if (data.condition.kind === 'loaded') matched = true;
         else if (data.condition.kind === 'url') matched = wc.getURL() === data.condition.url;
@@ -117,11 +120,11 @@ export class Workspace {
             check();
             if (beforeURL === wc.getURL() && beforeEpoch === (this.pageEpoch.get(data.tabId) ?? 0) && !wc.isLoading())
               matched = data.condition.kind === 'element' ? value === true : z.object({ content: z.string().max(64000) }).parse(value).content.includes(data.condition.text);
-          } catch (error) { check(); if (performance.now() < deadline) throw error; }
+          } catch (error) { check(); if (error instanceof BrowserScriptTimeout) timedOut = true; else throw error; }
         }
       }
       check();
-      if (matched || performance.now() >= deadline) return {
+      if (matched || timedOut || performance.now() >= deadline) return {
         tabId: data.tabId, url: wc.getURL(), outcome: matched ? 'matched' : 'timed_out', condition: data.condition,
         elapsedMs: Math.round(performance.now() - started), verifiedOutcome: false, untrusted: true,
         coverage: 'Current main document only; bounded observation, not business success or proof of absence.', next: 'browserRead for fresh evidence and refs; never replay remote actions on timeout.'
