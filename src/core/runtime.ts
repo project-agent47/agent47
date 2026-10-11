@@ -13,6 +13,7 @@ import type { FileSnapshots } from './snapshots';
 import { relative, isAbsolute, sep, resolve } from 'node:path';
 import { browserReadNames, browserEffectNames } from '../shared/browser-tools';
 import type { Approval } from '../shared/contracts';
+import { materialMessage, readMaterial, type MaterialSnapshot } from './materials';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
@@ -47,7 +48,14 @@ export class TaskRuntime {
   private interrupted = new Set<string>();
   constructor(readonly store: TaskStore, private model: ModelDriver, private artifactRoot: string, private changed: () => void = () => {}, private services: RuntimeServices = {}) {}
   start(): void {
-    for (const task of this.store.list()) {
+    const records = this.store.list();
+    const titles = new Map<string, string>();
+    for (const t of [...records].reverse()) {
+      const key = t.conversationId ?? t.id;
+      if (!titles.has(key) || (t.runNumber ?? 1) === 1) titles.set(key, t.conversationTitle ?? t.goal.split('\n')[0].slice(0, 60));
+    }
+    for (const task of records) {
+      if (!task.conversationTitle) { task.conversationTitle = titles.get(task.conversationId ?? task.id); this.save(task); }
       // Additive checkpoint migration; preserve old tool-call identity and state.
       if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser' && !task.question?.digest) {
         try { task.question = this.questionFor(task, task.pending[0]); }
@@ -70,25 +78,60 @@ export class TaskRuntime {
     }
     this.kick();
   }
-  list(): TaskView[] { return this.store.list().map(task => ({ ...publicTask(task), draft: this.drafts.get(task.id) })); }
-  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask'): TaskView {
+  list(): TaskView[] {
+    const records = this.store.list(), latest = new Map<string, string>();
+    for (const t of records) if (!latest.has(t.conversationId ?? t.id)) latest.set(t.conversationId ?? t.id, t.id);
+    return records.map(task => ({ ...publicTask(task), latestRunId: latest.get(task.conversationId ?? task.id), draft: this.drafts.get(task.id) }));
+  }
+  attachMaterial(id: string, material: MaterialSnapshot, replaceId?: string): TaskView {
+    const task = this.store.get(id);
+    if (this.list().find(t => t.id === id)?.latestRunId !== id) throw new Error('请回到当前轮次引用材料。');
+    if (material.sha256 !== sha256(material.content) || material.bytes !== Buffer.byteLength(material.content)) throw new Error('请重新选择材料：版本校验失败。');
+    const existing = task.materials?.find(m => m.sha256 === material.sha256 && m.name === material.name && task.materialSnapshots?.[m.id]?.path === material.path && m.sourceTaskId === material.sourceTaskId);
+    if (existing) return publicTask(task);
+    if (replaceId && !task.materials?.some(m => m.id === replaceId)) throw new Error('请重新选择材料。');
+    if (!replaceId && (task.materials?.length ?? 0) >= 10) throw new Error('请先移除材料：最多选择 10 份。');
+    if (Buffer.byteLength(material.content) > 1_000_000 || Object.values(task.materialSnapshots ?? {}).reduce((n, m) => n + m.bytes, 0) + material.bytes > 5_000_000)
+      throw new Error('请使用较小材料：单份 1 MB，会话版本合计 5 MB。');
+    task.materialSnapshots ??= {}; task.materialSnapshots[material.id] = material;
+    const view = { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source, sourceTaskId: material.sourceTaskId, sourceArtifactId: material.sourceArtifactId };
+    task.materials = (task.materials ?? []).filter(m => m.id !== replaceId); task.materials.push(view); this.save(task); return publicTask(task);
+  }
+  removeMaterial(id: string, materialId: string): TaskView {
+    const task = this.store.get(id);
+    if (this.list().find(t => t.id === id)?.latestRunId !== id) throw new Error('请回到当前轮次修改材料选择。');
+    task.materials = (task.materials ?? []).filter(m => m.id !== materialId);
+    if (!task.authorizedMaterialIds?.includes(materialId) && !task.queuedInput?.some(q => q.materials?.some(m => m.id === materialId))) delete task.materialSnapshots?.[materialId];
+    this.save(task); return publicTask(task);
+  }
+  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask', materials: MaterialSnapshot[] = []): TaskView {
     if (root && [...this.restoringRoots].some(other => overlappingRoots(root, other))) throw new Error('请等待文件快照恢复完成。');
     if (!goal.trim() || goal.length > 12000) throw new Error('Task goal must contain 1–12000 characters');
+    if (materials.length > 10 || materials.reduce((n, m) => n + m.bytes, 0) > 5_000_000 || materials.some(m => m.bytes > 1_000_000 || m.bytes !== Buffer.byteLength(m.content) || sha256(m.content) !== m.sha256)) throw new Error('请使用有效且总计不超过 5 MB 的材料版本。');
     const now = new Date().toISOString();
     const task: TaskRecord = {
       id: randomUUID(), goal: goal.trim(), skill, root, status: 'queued', createdAt: now, updatedAt: now,
-      events: [], artifacts: [], steps: 0, pending: [], messages: [{ role: 'user', content: goal.trim() }],
-      usage: [], runNumber: 1, queuedInput: [],
+      events: [], artifacts: [], steps: 0, pending: [], messages: [{ role: 'user', content: materialMessage(goal.trim(), materials) }],
+      usage: [], runNumber: 1, queuedInput: [], conversationTitle: goal.trim().split('\n')[0].slice(0, 60),
       fileMode: fileMode ?? this.services.fileMode?.() ?? 'ask', hostMode: 'ask', fileChanges: []
     };
-    this.event(task, 'user', task.goal); this.save(task); this.kick();
+    task.materialSnapshots = Object.fromEntries(materials.map(m => [m.id, m]));
+    task.materials = materials.map(({ id, name, sha256, bytes, capturedAt, source }) => ({ id, name, sha256, bytes, capturedAt, source }));
+    task.authorizedMaterialIds = materials.map(m => m.id);
+    this.event(task, 'user', task.goal, task.materials); this.save(task); this.kick();
     return publicTask(task);
   }
-  send(id: string, text: string, mode: 'queue' | 'steer' | 'followup', commandId: string, instruction = false): TaskView {
+  send(id: string, text: string, mode: 'queue' | 'steer' | 'followup', commandId: string, instruction = false, materialIds: string[] = []): TaskView {
     if (!text.trim() || text.length > 12000) throw new Error('Invalid message');
     const prior = this.store.command(commandId);
     if (prior) return publicTask(this.store.get(prior));
     let task = this.store.get(id);
+    const materials = materialIds.map(mid => {
+      const m = task.materials?.find(m => m.id === mid);
+      if (!m) throw new Error('请重新选择材料：引用列表已变化。');
+      return m;
+    });
+    if (task.status === 'awaiting_input' && task.question?.legacy && !instruction && materials.length) throw new Error('请先回答当前问题，再发送材料。');
     if (task.root && [...this.restoringRoots].some(other => overlappingRoots(task.root!, other))) throw new Error('请等待文件快照恢复完成。');
     if (task.effectStarted && (task.status !== 'running' || !this.active.has(id))) throw new Error('Inspect unknown host effects before continuing');
     if (terminal.has(task.status)) {
@@ -97,7 +140,7 @@ export class TaskRuntime {
       const parent = task;
       const hadQueue = !!parent.queuedInput?.length, hadDraft = !!parent.composerDraft;
       if (hadDraft) parent.composerDraft = '';
-      task = this.fork(parent, text, true); if (hadQueue) parent.queuedInput = [];
+      task = this.fork(parent, text, true, materials); if (hadQueue) parent.queuedInput = [];
       this.store.saveCommand(commandId, task, hadQueue || hadDraft ? parent : undefined); this.changed(); this.kick(); return publicTask(task);
     }
     if (task.status === 'awaiting_reconciliation') throw new Error('Inspect unknown host effects before continuing');
@@ -106,7 +149,7 @@ export class TaskRuntime {
       task.question = undefined; task.status = 'queued'; this.event(task, 'user', text.trim());
     } else {
       if ((task.queuedInput?.length ?? 0) >= 32) throw new Error('Task queue full: remove or deliver pending messages first');
-      task.queuedInput ??= []; task.queuedInput.push({ id: commandId, text: text.trim(), mode });
+      task.queuedInput ??= []; task.queuedInput.push({ id: commandId, text: text.trim(), mode, materials });
       if (['awaiting_approval', 'awaiting_input'].includes(task.status) && mode === 'steer') {
         if (task.approval) task.approval.state = 'denied';
         task.status = 'queued'; task.question = undefined;
@@ -132,7 +175,7 @@ export class TaskRuntime {
     if (terminal.has(task.status)) {
       const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
       if (latest?.id !== id) throw new Error('Task not latest: open latest run');
-      const child = this.fork(task, item.text);
+      const child = this.fork(task, item.text, false, item.materials);
       // Stopped queues are carried, never silently dispatched on restart.
       child.queuedInput = task.queuedInput!.filter(input => input.id !== messageId);
       child.queueAfterStep = 1;
@@ -311,22 +354,25 @@ export class TaskRuntime {
     }
     return result;
   }
-  private fork(parent: TaskRecord, text: string, includeQueued = false): TaskRecord {
+  private fork(parent: TaskRecord, text: string, includeQueued = false, materials: NonNullable<TaskView['materials']> = []): TaskRecord {
     const now = new Date().toISOString();
     const messages = structuredClone(parent.messages);
     for (const call of parent.pending) messages.push({ role: 'tool', content: [{ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: { type: 'error-text', value: 'Prior run ended. This intent must not be replayed.' } }] });
-    if (includeQueued) for (const input of parent.queuedInput ?? []) messages.push({ role: 'user', content: input.text });
-    messages.push({ role: 'user', content: text.trim() });
+    if (includeQueued) for (const input of parent.queuedInput ?? []) messages.push({ role: 'user', content: materialMessage(input.text, input.materials) });
+    messages.push({ role: 'user', content: materialMessage(text.trim(), materials) });
     const task: TaskRecord = {
       id: randomUUID(), goal: text.trim(), skill: parent.skill, root: parent.root, status: 'queued',
       createdAt: now, updatedAt: now, events: structuredClone(parent.events), artifacts: [], steps: 0, pending: [], messages,
       conversationId: parent.conversationId ?? parent.id, goalId: parent.goalId ?? parent.id, parentRunId: parent.id,
       runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? []),
+      conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60),
+      materials: structuredClone(parent.materials ?? []), materialSnapshots: structuredClone(parent.materialSnapshots ?? {}),
+      authorizedMaterialIds: [...new Set([...(parent.authorizedMaterialIds ?? []), ...materials.map(m => m.id), ...(includeQueued ? (parent.queuedInput ?? []).flatMap(q => (q.materials ?? []).map(m => m.id)) : [])])],
       fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
-    if (includeQueued) for (const input of parent.queuedInput ?? []) this.event(task, 'user', input.text);
+    if (includeQueued) for (const input of parent.queuedInput ?? []) this.event(task, 'user', input.text, input.materials);
     this.event(task, 'system', `开始第 ${task.runNumber} 轮执行；旧执行轮次保持不变。`);
-    this.event(task, 'user', text.trim()); return task;
+    this.event(task, 'user', text.trim(), materials); return task;
   }
   cancel(id: string): void {
     const task = this.store.get(id);
@@ -365,8 +411,8 @@ export class TaskRuntime {
     this.stopped = true;
     for (const controller of this.active.values()) controller.abort();
   }
-  private event(task: TaskRecord, kind: TaskRecord['events'][number]['kind'], text: string): void {
-    task.events.push({ id: randomUUID(), at: new Date().toISOString(), kind, text });
+  private event(task: TaskRecord, kind: TaskRecord['events'][number]['kind'], text: string, materials?: TaskView['materials']): void {
+    task.events.push({ id: randomUUID(), at: new Date().toISOString(), kind, text, ...(materials?.length ? { materials: structuredClone(materials) } : {}) });
   }
   private save(task: TaskRecord): void { this.store.save(task); this.changed(); }
   private kick(): void { if (!this.stopped) queueMicrotask(() => void this.drain()); }
@@ -399,6 +445,10 @@ export class TaskRuntime {
       purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
       catalog: JSON.stringify(this.services.skills?.catalog() ?? []), webOrigins: task.webOrigins ?? [],
       browserTabs: this.services.browser?.tabs(task.id) ?? [],
+      materials: (task.authorizedMaterialIds ?? []).map(id => {
+        const m = task.materialSnapshots?.[id];
+        return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt } : undefined;
+      }).filter(Boolean),
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
         if (purpose === 'turn') { draft[kind] = (draft[kind] + text).slice(0, 1_000_000); this.changed(); }
@@ -452,7 +502,11 @@ export class TaskRuntime {
         if (steering.length) {
           while (task.pending.length) this.toolResult(task, task.pending[0], 'User changed requirements; pending intent superseded. Do not execute it.', true);
           if (task.approval?.state === 'pending' || task.approval?.state === 'approved') task.approval.state = 'denied';
-          for (const input of steering) { task.messages.push({ role: 'user', content: input.text }); this.event(task, 'user', input.text); }
+          for (const input of steering) {
+            task.messages.push({ role: 'user', content: materialMessage(input.text, input.materials) });
+            task.authorizedMaterialIds = [...new Set([...(task.authorizedMaterialIds ?? []), ...(input.materials ?? []).map(m => m.id)])];
+            this.event(task, 'user', input.text, input.materials);
+          }
           task.queuedInput = task.queuedInput?.filter(item => !steering.some(delivered => delivered.id === item.id));
           // Promoting one message must not promote the rest of the ordinary queue.
           task.queueAfterStep = hasImmediate ? task.steps + 1 : undefined;
@@ -594,7 +648,8 @@ export class TaskRuntime {
                 if (!this.services.skills) throw new Error('No skills installed');
                 if (!task.skillPins?.[input.id]) throw new Error('Load skill before reading references');
                 value = await this.services.skills.read(input.id, input.path, task.skillPins[input.id]);
-              } else value = await readTool(task.root, call.toolName, call.input);
+              } else if (call.toolName === 'readMaterial') value = readMaterial(task.materialSnapshots ?? {}, task.authorizedMaterialIds ?? [], call.input);
+              else value = await readTool(task.root, call.toolName, call.input);
               if (controller.signal.aborted || this.stopped) return;
               const loadedSkills = task.loadedSkills, skillPins = task.skillPins;
               task = this.store.get(id);

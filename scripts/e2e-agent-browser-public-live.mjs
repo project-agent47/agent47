@@ -9,7 +9,7 @@ let app, page;
 const deadline = setTimeout(() => { console.error('Public live browser acceptance timed out'); app?.process().kill(); process.exit(1); }, 300000);
 try {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
   await page.getByLabel('任务目标').fill('请用 browserOpen 打开 https://pi.dev/，等待应用的网页授权批准，再用 browserRead 读取实际页面。根据实际页面，用中文两句话说明 Pi 的核心设计；不要用 readWeb、Shell 或文件工具，不要凭记忆回答，不需要点击或提交。');
   await page.getByLabel('开始任务', { exact: true }).click();
   await page.getByRole('heading', { name: '操作网页', exact: true }).waitFor({ timeout: 180000 });

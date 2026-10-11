@@ -10,8 +10,8 @@ class DocumentBoundary extends Component<{ children: ReactNode; content: string 
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? <div className="document-markdown"><p>编辑器加载失败，暂以纯文本查看。关闭后重新打开可重试。</p><pre>{this.props.content}</pre></div> : this.props.children; }
 }
-export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
-  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void }) {
+export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage, attachMaterial }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
+  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void; attachMaterial: (tabId: string) => void }) {
   const tab = state.tabs.find(t => t.id === state.activeId), box = useRef<HTMLDivElement>(null);
   const [raw, setRaw] = useState(false), [draftWidth, setDraftWidth] = useState(state.width);
   const [url, setURL] = useState('');
@@ -71,6 +71,7 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
           : <div className="unsupported-document"><h3>暂不支持此格式</h3><p>{tab.name} 可以在系统默认查看器打开；不会解析或自动发送给模型。</p></div>}
       </div>
       <footer className="workspace-footer">{tab.taskId && <button className="text-button" onClick={() => sourceTask(tab.taskId!)}>查看来源任务</button>}
+        {['file', 'artifact'].includes(tab.source) && tab.kind !== 'unsupported' && <button className="text-button" disabled={!canSendPage || blocked} onClick={() => attachMaterial(tab.id)}>引用到当前对话</button>}
         {tab.kind !== 'web' && <button className="secondary small-button" disabled={tab.source === 'proposal'} onClick={() => void run(async () => {
           if (bridge.preview) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([tab.content ?? ''])); a.download = tab.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
           else await bridge.workspaceSystemOpen(tab.id);

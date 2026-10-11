@@ -1,7 +1,8 @@
 export type TaskStatus = 'queued' | 'running' | 'awaiting_approval' | 'awaiting_input' | 'awaiting_reconciliation' | 'completed' | 'failed' | 'cancelled';
 export type SkillId = 'general' | 'review' | 'deliver';
-export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string }
+export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string; materials?: MaterialView[] }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
+export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; sourceTaskId?: string; sourceArtifactId?: string }
 export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'directory' | 'shell' | 'code' | 'browser'; payload?: Record<string, unknown>; root?: string; before?: string; denialReason?: string }
 export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compaction'; state: 'pending' | 'reported' | 'partial' | 'unknown'; input?: number; output?: number; total?: number; cacheRead?: number; reasoning?: number; textDeltas?: number; reasoningDeltas?: number }
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
@@ -29,8 +30,9 @@ export interface TaskView {
   createdAt: string; updatedAt: string; events: TaskEvent[]; artifacts: Artifact[];
   approval?: Approval; steps: number;
   conversationId?: string; goalId?: string; parentRunId?: string; runNumber?: number;
+  conversationTitle?: string; latestRunId?: string; materials?: MaterialView[];
   usage?: TokenUsage[]; draft?: { text: string; reasoning: string };
-  question?: UserQuestion; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup' }[];
+  question?: UserQuestion; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup'; materials?: MaterialView[] }[];
   composerDraft?: string;
   skillPins?: Record<string, string>;
   webOrigins?: string[];
@@ -42,9 +44,19 @@ export interface TaskView {
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
-export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string }
+export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[] }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  lastRun(): Promise<string | undefined>;
+  rememberRun(id?: string): Promise<void>;
+  prepareMaterial(): Promise<{ ticket: string; material: MaterialView } | undefined>;
+  discardMaterialTicket(ticket: string): Promise<void>;
+  chooseMaterial(taskId: string): Promise<TaskView>;
+  attachMaterial(input: { taskId: string; tabId: string }): Promise<TaskView>;
+  removeMaterial(input: { taskId: string; materialId: string }): Promise<TaskView>;
+  refreshMaterial(input: { taskId: string; materialId: string }): Promise<TaskView>;
+  openMaterial(input: { taskId: string; materialId: string }): Promise<WorkspaceState>;
+  checkMaterials(taskId: string): Promise<{ id: string; state: 'current' | 'changed' | 'unavailable' }[]>;
   workspaceAgentGrant(input: { taskId: string; tabId: string; expectedURL: string; mode: 'deny' | 'read' | 'ask' | 'allow' }): Promise<WorkspaceState>;
   workspaceView(): Promise<WorkspaceState>;
   workspaceOpen(input: WorkspaceSource): Promise<WorkspaceState>;
@@ -60,7 +72,7 @@ export interface AgentBridge {
   listTasks(): Promise<TaskView[]>;
   createTask(input: CreateInput): Promise<TaskView>;
   cancelTask(id: string): Promise<void>;
-  sendMessage(input: { taskId: string; text: string; mode: 'queue' | 'steer' | 'followup'; clientMessageId: string; instruction?: boolean }): Promise<TaskView>;
+  sendMessage(input: { taskId: string; text: string; mode: 'queue' | 'steer' | 'followup'; clientMessageId: string; instruction?: boolean; materialIds?: string[] }): Promise<TaskView>;
   manageQueue(input: { taskId: string; messageId: string; action: 'delete' | 'send' }): Promise<TaskView>;
   saveQuestionDraft(input: QuestionDraftInput): Promise<QuestionDraft>;
   respondQuestion(input: QuestionReply): Promise<TaskView>;

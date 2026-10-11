@@ -40,8 +40,32 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let previewExecution = { hostExecution: false, fileMode: 'snapshot' as 'snapshot' | 'ask' };
 let previewRetention: 0 | 7 | 30 | 90 = 0;
 const pageCaptures = new Map<string, PageCapture>();
+const preparedMaterials = new Map<string, import('../shared/contracts').MaterialView>();
+const materialContents = new Map<string, string>();
 const previewBridge: AgentBridge = {
   preview: true,
+  lastRun: async () => undefined,
+  rememberRun: async () => {},
+  discardMaterialTicket: async ticket => { preparedMaterials.delete(ticket); },
+  prepareMaterial: async () => {
+    const ticket = crypto.randomUUID(), content = '# 示例材料\n\n预览不读取真实文件，也不调用模型。';
+    const material = { id: crypto.randomUUID(), name: '示例材料.md', sha256: 'a'.repeat(64), bytes: new TextEncoder().encode(content).length, capturedAt: new Date().toISOString(), source: 'file' as const };
+    preparedMaterials.set(ticket, material); materialContents.set(material.id, content); return { ticket, material };
+  },
+  chooseMaterial: async taskId => {
+    const task = samples.find(t => t.id === taskId)!; const picked = await previewBridge.prepareMaterial();
+    task.materials ??= []; task.materials.push(picked!.material); emit(); return clone(task);
+  },
+  attachMaterial: async input => {
+    const task = samples.find(t => t.id === input.taskId)!, tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
+    if (!tab || !['file', 'artifact'].includes(tab.source) || tab.kind === 'unsupported') throw new Error('请选择已保存文本。');
+    const m = { id: crypto.randomUUID(), name: tab.name, sha256: tab.sha256, bytes: new TextEncoder().encode(tab.content ?? '').length, capturedAt: new Date().toISOString(), source: tab.source as 'file' | 'artifact' };
+    materialContents.set(m.id, tab.content ?? ''); task.materials ??= []; task.materials.push(m); emit(); return clone(task);
+  },
+  removeMaterial: async input => { const task = samples.find(t => t.id === input.taskId)!; task.materials = task.materials?.filter(m => m.id !== input.materialId); emit(); return clone(task); },
+  refreshMaterial: async input => { const task = samples.find(t => t.id === input.taskId)!; return clone(task); },
+  openMaterial: async input => { const m = samples.find(t => t.id === input.taskId)?.materials?.find(m => m.id === input.materialId); if (!m) throw new Error('请选择材料。'); return previewWorkspace.material(m.name, materialContents.get(m.id) ?? ''); },
+  checkMaterials: async id => (samples.find(t => t.id === id)?.materials ?? []).map(m => ({ id: m.id, state: 'current' as const })),
   workspaceAgentGrant: async input => {
     const state = await previewWorkspace.view(), tab = state.tabs.find(t => t.id === input.tabId), task = samples.find(t => t.id === input.taskId);
     if (!tab || !task || tab.kind !== 'web') throw new Error('请选择对话和网页。');
@@ -65,12 +89,13 @@ const previewBridge: AgentBridge = {
     const snapshot = pageCaptures.get(input.id); if (!snapshot || snapshot.digest !== input.digest) throw new Error('请重新审阅页面。');
     return previewBridge.sendMessage({ taskId: snapshot.taskId, text: pageMessage(snapshot), mode: 'queue', clientMessageId: input.clientMessageId });
   },
-  listTasks: async () => clone(samples),
+  listTasks: async () => clone(samples.map(t => ({ ...t, conversationTitle: t.conversationTitle ?? samples.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60), latestRunId: samples.find(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id))?.id }))),
   createTask: async (input: CreateInput) => {
     const at = new Date().toISOString();
     const task: TaskView = {
       id: crypto.randomUUID(), goal: input.goal, skill: input.skill, root: input.folderGrant ? '~/Projects/preview' : undefined,
       status: 'running', createdAt: at, updatedAt: at, steps: 0, artifacts: [], fileMode: previewExecution.fileMode, hostMode: 'ask',
+      conversationTitle: input.goal.split('\n')[0].slice(0, 60), materials: (input.materialTickets ?? []).map(id => preparedMaterials.get(id)!).filter(Boolean),
       events: [{ id: crypto.randomUUID(), at, kind: 'user', text: input.goal }]
     };
     samples.unshift(task); emit();
@@ -101,9 +126,9 @@ const previewBridge: AgentBridge = {
     const parent = samples.find(t => t.id === input.taskId)!;
     parent.composerDraft = '';
     if (['running', 'queued', 'awaiting_approval', 'awaiting_input'].includes(parent.status)) {
-      parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode }); emit(); return clone(parent);
+      parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode, materials: parent.materials?.filter(m => input.materialIds?.includes(m.id)) }); emit(); return clone(parent);
     }
-    const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
+    const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60), conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
       status: 'completed', approval: undefined, artifacts: [], steps: 1, usage: [], events: [...parent.events,
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text },
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '## 继续讨论\n\n这是**多轮交互示例**，没有调用模型。\n\n| 能力 | 状态 |\n|---|---|\n| Markdown | 示例渲染 |\n| 工具 | 不执行 |' }] };

@@ -9,6 +9,7 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
   state.visible = true; return clone();
 }
 export const previewWorkspace = {
+  material: async (name: string, content: string) => add(name, content, 'file'),
   agentGrant: async (tabId: string, conversationId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => {
     const tab = state.tabs.find(t => t.id === tabId); if (!tab?.url) throw new Error('请选择网页。');
     tab.agentGrants = (tab.agentGrants ?? []).filter(g => g.conversationId !== conversationId);

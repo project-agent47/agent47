@@ -5,6 +5,7 @@ import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView,
 import { Markdown } from './Markdown';
 import { ConsentPanel, DecisionPanel, MessageComposer, type LocalDecision } from './DecisionPanel';
 import { WorkspacePane } from './WorkspacePane';
+import { MaterialBar } from './MaterialBar';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
 const statusLabels: Record<TaskView['status'], string> = {
@@ -29,11 +30,13 @@ export function App() {
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [page, setPage] = useState<Page>('home');
   const [selected, setSelected] = useState<string>();
+  const [selectionLoaded, setSelectionLoaded] = useState(bridge.preview);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [goal, setGoal] = useState('');
   const [skill, setSkill] = useState<SkillId>('general');
   const [folder, setFolder] = useState<FolderGrant>();
+  const [initialMaterials, setInitialMaterials] = useState<{ ticket: string; material: import('../shared/contracts').MaterialView }[]>([]);
   const [theme, setTheme] = useState(() => matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -49,9 +52,16 @@ export function App() {
   const [fileMode, setFileMode] = useState<'snapshot' | 'ask'>('snapshot');
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const task = tasks.find(t => t.id === selected);
+  const current = task && tasks.find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
+  const historical = !!task && current?.id !== task.id;
+  const title = (t: TaskView) => t.conversationTitle ?? tasks.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60) ?? t.goal;
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const needsDecision = !!task && (['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
   useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
+  useEffect(() => {
+    if (!bridge.preview) void bridge.lastRun().then(id => { setSelected(value => value ?? id); setSelectionLoaded(true); }).catch(() => setSelectionLoaded(true));
+  }, []);
+  useEffect(() => { if (selectionLoaded && !bridge.preview) void bridge.rememberRun(selected).catch(() => setError('未能保存打开位置；任务记录仍保留。')); }, [selected, selectionLoaded]);
   useEffect(() => { if (!needsDecision) setEditingDecision(false); }, [needsDecision]);
   const pending = tasks.filter(t => t.status === 'awaiting_approval').length;
   const active = tasks.filter(t => ['running', 'queued'].includes(t.status)).length;
@@ -80,15 +90,15 @@ export function App() {
     event.preventDefault();
     if (!goal.trim() || busy) return;
     void run(async () => {
-      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: folder?.id });
-      setSelected(created.id); setGoal(''); setInspector(false);
+      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: folder?.id, materialTickets: initialMaterials.map(m => m.ticket) });
+      setSelected(created.id); setGoal(''); setInitialMaterials([]); setInspector(false);
     });
   };
   const go = (next: Page) => { setPage(next); setSelected(undefined); setError(''); };
   const open = (id: string) => { setPage('home'); setSelected(id); setInspector(false); setError(''); };
   const setArtifact = (value: { task: TaskView; artifact: Artifact }) => void run(async () => setWorkspace(await bridge.workspaceOpen({ kind: 'artifact', taskId: value.task.id, artifactId: value.artifact.id })));
   const latest = tasks.filter((t, index) => tasks.findIndex(other => (other.conversationId ?? other.id) === (t.conversationId ?? t.id)) === index);
-  const visible = latest.filter(t => t.goal.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
+  const visible = latest.filter(t => (title(t) + ' ' + t.goal).toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
 
   return <div className={selected ? 'app task-open' : 'app'}>
     <aside className="sidebar">
@@ -99,9 +109,9 @@ export function App() {
         <button className={page === 'artifacts' ? 'nav active' : 'nav'} onClick={() => go('artifacts')}><Layers size={18} />成果库</button>
         <button className={page === 'capabilities' ? 'nav active' : 'nav'} onClick={() => go('capabilities')}><ShieldCheck size={18} />能力与边界</button>
       </nav>
-      <div className="sidebar-section"><span>最近任务</span><span className="tiny">{tasks.length}</span></div>
+      <div className="sidebar-section"><span>最近会话</span><span className="tiny">{latest.length}</span></div>
       <div className="recent-nav">{latest.slice(0, 7).map(t => <button key={t.id} className={t.id === selected ? 'recent-item selected' : 'recent-item'} onClick={() => open(t.id)}>
-        <span className={`task-dot ${t.status}`} /><span>{t.goal}</span>
+        <span className={`task-dot ${t.status}`} /><span>{title(t)}</span>
       </button>)}{!tasks.length && <p className="sidebar-empty">你的第一个任务会出现在这里。</p>}</div>
       <div className="sidebar-bottom">
         <div className="local-indicator"><span className="local-dot" /><span>本地工作空间<small>{bridge.preview ? '交互预览 · 示例数据' : '任务保存在这台设备'}</small></span><LockKeyhole size={14} /></div>
@@ -121,6 +131,8 @@ export function App() {
         {page === 'home' && !task && <div className="home page-enter">
           <div className="home-heading"><div><h1>Agentic Workbench</h1><p>DeepSeek · 本地任务、文件与 Skills</p></div></div>
           <form className="composer" onSubmit={create}>
+            <div className="material-bar"><div className="material-chips">{initialMaterials.map(m => <span key={m.ticket} className="material-chip">{m.material.name} · {m.material.sha256.slice(0, 6)}<button type="button" disabled={busy} aria-label={`移除待发送材料：${m.material.name}`} onClick={() => void run(async () => { await bridge.discardMaterialTicket(m.ticket); setInitialMaterials(old => old.filter(item => item.ticket !== m.ticket)); })}>×</button></span>)}</div>
+              <button type="button" className="text-button" disabled={busy || initialMaterials.length >= 10} onClick={() => void run(async () => { const m = await bridge.prepareMaterial(); if (m) setInitialMaterials(old => [...old, m]); })}>＋引用文件材料</button><span>发送时交给 DeepSeek，不授权父目录；临时选择 10 分钟有效。</span></div>
             <label className="sr-only" htmlFor="goal">任务目标</label>
             <textarea id="goal" ref={goalRef} placeholder="描述目标，或选择项目后开始工作…" value={goal} onChange={e => setGoal(e.target.value)} maxLength={12000} rows={2} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
             <div className="composer-bottom"><div className="composer-options"><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
@@ -134,12 +146,13 @@ export function App() {
           </div></section>
           <section className="task-list-section"><div className="list-heading"><h2>任务<span className="subtle-count">{tasks.length}</span></h2><div className="task-totals">{active > 0 && <span>{active} 项进行中</span>}{pending > 0 && <span className="attention">{pending} 项待审阅</span>}</div></div>
             <div className="list-controls"><div className="tabs">{[['all', '全部'], ['active', '进行中'], ['approval', '待审阅']].map(([id, label]) => <button className={filter === id ? 'tab selected' : 'tab'} key={id} onClick={() => setFilter(id)}>{label}{id === 'approval' && pending > 0 && <span>{pending}</span>}</button>)}</div><label className="search-box"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索任务" aria-label="搜索任务" /></label></div>
-            <div className="task-table">{visible.map(t => <button className="task-row" key={t.id} onClick={() => open(t.id)}><span className="row-icon"><FileText size={18} /></span><span className="row-body"><strong>{t.goal}</strong><small>{skills.find(s => s.id === t.skill)?.title} · {t.root ? '已授权项目目录' : '无目录访问'}{bridge.preview ? ' · 示例' : ''}</small></span><Status task={t} /><span className="row-time">{time(t.updatedAt)}</span><ChevronRight size={16} /></button>)}{!visible.length && <div className="empty-state"><Inbox size={28} /><h3>{query || filter !== 'all' ? '没有匹配的任务' : '从一个小任务开始'}</h3><p>{query || filter !== 'all' ? '换一个关键词，或切回全部任务。' : '交办目标后，你可以在这里查看每一步进展。'}</p>{(query || filter !== 'all') && <button className="text-button" onClick={() => { setQuery(''); setFilter('all'); }}>清除筛选</button>}</div>}</div>
+            <div className="task-table">{visible.map(t => <button className="task-row" key={t.id} onClick={() => open(t.id)}><span className="row-icon"><FileText size={18} /></span><span className="row-body"><strong>{title(t)}</strong><small>{skills.find(s => s.id === t.skill)?.title} · 第 {t.runNumber ?? 1} 轮 · {t.root ? '已授权项目目录' : '无目录访问'}{bridge.preview ? ' · 示例' : ''}</small></span><Status task={t} /><span className="row-time">{time(t.updatedAt)}</span><ChevronRight size={16} /></button>)}{!visible.length && <div className="empty-state"><Inbox size={28} /><h3>{query || filter !== 'all' ? '没有匹配的任务' : '从一个小任务开始'}</h3><p>{query || filter !== 'all' ? '换一个关键词，或切回全部任务。' : '交办目标后，你可以在这里查看每一步进展。'}</p>{(query || filter !== 'all') && <button className="text-button" onClick={() => { setQuery(''); setFilter('all'); }}>清除筛选</button>}</div>}</div>
           </section>
         </div>}
         {page === 'home' && task && <div className="task-page page-enter">
           <div className="task-heading"><button className="text-button back" onClick={() => setSelected(undefined)}><ArrowLeft size={15} />全部任务</button><div className="task-actions"><button className="icon-button" aria-label={inspector ? '隐藏执行详情' : '显示执行详情'} onClick={() => setInspector(!inspector)}><Activity size={18} /></button>{!['completed', 'failed', 'cancelled'].includes(task.status) && <button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.cancelTask(task.id))}><Square size={12} />停止任务</button>}</div></div>
-          <div className="task-title"><Status task={task} /><h1>{task.goal.length > 100 ? task.goal.slice(0, 100) + '…' : task.goal}</h1><div className="task-meta"><span>{skills.find(s => s.id === task.skill)?.title}</span><span>第 {task.runNumber ?? 1} 轮</span><span>{task.steps} 个模型步骤</span></div></div>
+          <div className="task-title"><Status task={task} /><h1>{title(task)}</h1><div className="task-meta"><span>{skills.find(s => s.id === task.skill)?.title}</span><span>第 {task.runNumber ?? 1} 轮</span><span>{task.steps} 个模型步骤</span></div></div>
+          <div className="run-navigation"><label>执行轮次 <select aria-label="执行轮次" value={task.id} onChange={e => open(e.target.value)}>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).map(t => <option key={t.id} value={t.id}>第 {t.runNumber ?? 1} 轮 · {statusLabels[t.status]}{current?.id === t.id ? ' · 当前' : ''}</option>)}</select></label>{historical && <button className="secondary small-button" onClick={() => open(current!.id)}>回到当前轮次继续</button>}<details><summary>本轮目标</summary><p>{task.goal}</p></details></div>
           <TokenStats tasks={tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id))} />
           {!!Object.keys(task.skillPins ?? {}).length && <div className="active-skills">已加载 Skills：{Object.entries(task.skillPins!).map(([id, hash]) => <span key={id}>{id} · {hash.slice(0, 8)}</span>)}</div>}
           <details className="permission-disclosure"><summary>工具权限 · 文件{task.fileMode === 'snapshot' ? '自动快照' : '逐次确认'} · Shell {hostEnabled ? task.hostMode === 'allow' ? '已授权' : '需确认' : '关闭'} · {task.root ?? '无项目目录'}</summary><section className="tool-permissions" aria-label="本次对话工具权限"><div><strong>本次对话工具权限</strong><span>{task.root ?? '尚未选择项目目录'}</span></div>
@@ -161,7 +174,7 @@ export function App() {
             {task.events.filter(e => ['assistant', 'user', 'error', 'reasoning', 'tool'].includes(e.kind)).map(e => e.kind === 'tool'
               ? <details className="tool-event" key={e.id}><summary><CheckCircle2 size={13} />{e.text.split(' · ')[0]}<time>{time(e.at)}</time></summary><pre>{e.text}</pre></details> : e.kind === 'reasoning'
               ? <details className="reasoning" key={e.id}><summary>模型返回的推理内容</summary><Markdown>{e.text}</Markdown></details>
-              : <article className={`message ${e.kind}`} key={e.id}><div className="message-icon">{e.kind === 'user' ? <span>你</span> : <Logo small />}</div><div className="message-body"><div className="message-author">{e.kind === 'user' ? '你' : e.kind === 'error' ? '执行中断' : 'Agent47'}<time>{time(e.at)}</time></div>{e.kind === 'assistant' ? <Markdown>{e.text}</Markdown> : <div className="message-text">{e.text}</div>}</div></article>)}
+              : <article className={`message ${e.kind}`} key={e.id}><div className="message-icon">{e.kind === 'user' ? <span>你</span> : <Logo small />}</div><div className="message-body"><div className="message-author">{e.kind === 'user' ? '你' : e.kind === 'error' ? '执行中断' : 'Agent47'}<time>{time(e.at)}</time></div>{e.kind === 'assistant' ? <Markdown>{e.text}</Markdown> : <div className="message-text">{e.text}</div>}{!!e.materials?.length && <div className="material-chips">{e.materials.map(m => <button className="material-chip" title={`${m.sha256} · ${m.bytes} B`} key={m.id} onClick={() => void run(async () => setWorkspace(await bridge.openMaterial({ taskId: task.id, materialId: m.id })))}>{m.name} · {m.sha256.slice(0, 6)}</button>)}</div>}</div></article>)}
             {task.draft?.reasoning && <details className="reasoning"><summary>正在接收模型推理…</summary><Markdown>{task.draft.reasoning}</Markdown></details>}
             {task.draft?.text && <article className="message assistant streaming"><div className="message-icon"><Logo small /></div><div className="message-body"><div className="message-author">Agent47 · 流式输出</div><Markdown>{task.draft.text}</Markdown></div></article>}
             {task.context && <div className="context-note">上下文预估 {task.context.estimatedTokens.toLocaleString()}（本地保守估计，非供应商 tokens） · 自动压缩 {task.context.compactions} 次 · 原始历史保留</div>}
@@ -176,12 +189,14 @@ export function App() {
             {(task.status === 'running' || task.status === 'queued') && <div className="working-state" role="status"><LoaderCircle size={16} className="spin" />{task.status === 'queued' ? '已进入本地队列，等待执行…' : '正在推进任务，进展会保存在本地…'}</div>}
             {needsDecision && <button className="decision-anchor text-button" onClick={() => { setEditingDecision(false); document.querySelector('.composer-dock')?.scrollIntoView({ block: 'nearest' }); }}>等待你的{task.status === 'awaiting_input' ? '回答' : task.unknownEffect ? '检查' : '确认'} · 在底部完成<ChevronRight size={14} /></button>}
             {!!task.artifacts.length && <section className="task-artifacts"><h2>这次任务的成果</h2>{task.artifacts.map(a => <button className="artifact-row" key={a.id} onClick={() => setArtifact({ task, artifact: a })}><FileText size={22} /><span><strong>{a.name}</strong><small>已保存 · {bridge.preview ? '示例成果' : '内容校验可追溯'}</small></span><ArrowUpRight size={17} /></button>)}</section>}
-            {['failed', 'cancelled'].includes(task.status) && <div className="task-end-note">这个任务已结束，不会自动重新执行。你可以复制目标，创建一个新任务。<button className="text-button" onClick={() => { setGoal(task.goal); setSkill(task.skill); setSelected(undefined); }}>带入新任务<ArrowUpRight size={14} /></button></div>}
+            {['failed', 'cancelled'].includes(task.status) && <div className="task-end-note">本轮已结束，不会自动重新执行。可以在当前轮次下方追问，开启新的执行轮次；不会重放旧动作。<button className="text-button" onClick={() => { setGoal(task.goal); setSkill(task.skill); setSelected(undefined); }}>带入独立新任务<ArrowUpRight size={14} /></button></div>}
             {task.status === 'completed' && <div className="completion-note"><CheckCircle2 size={15} />任务已完成。已结束的任务不会被重新执行。</div>}
           </div>
           {inspector && <aside className="inspector"><div className="inspector-heading"><h2>执行详情</h2><button className="icon-button" aria-label="关闭执行详情" onClick={() => setInspector(false)}><PanelRightClose size={17} /></button></div><div className="permission-summary"><span>本次权限</span><p><Folder size={14} />{task.root || '未授权任何项目目录'}</p><p><ShieldCheck size={14} />文件：{task.fileMode === 'snapshot' ? '自动快照' : '逐次确认'}；本机执行：{!hostEnabled ? '关闭' : task.hostMode === 'allow' ? '已授权，免重复确认' : '逐次确认'}</p></div><h3>事件记录</h3><div className="event-timeline">{task.events.map(e => <div key={e.id} className="timeline-event"><span className="timeline-dot" /><div><time>{time(e.at)} · {({ user: '目标', assistant: '回复', reasoning: '推理', tool: '工具', system: '状态', error: '错误' })[e.kind]}</time><p>{e.text.length > 240 ? e.text.slice(0, 240) + '…' : e.text}</p></div></div>)}</div><div className="inspector-foot">任务与检查点保存在本地。<br />模型请求由所选服务处理。</div></aside>}
           </div>
           <section className="composer-dock" aria-label="对话输入区">
+            {historical && !localDecision ? <div className="history-notice"><span>历史轮次不发送聊天；继续不会重放旧动作。</span><button className="primary small-button" onClick={() => open(current!.id)}>回到当前轮次</button></div> : <>
+            {!localDecision && (!needsDecision || editingDecision) && <MaterialBar key={task.id} task={task} busy={busy} run={run} open={setWorkspace} />}
             {!!task.queuedInput?.length && <div className="message-queue" aria-label="待发送消息"><div className="queue-heading">待发送 · {task.queuedInput.length}<span>{['completed', 'cancelled', 'failed'].includes(task.status) ? '已暂停，点击立即发送继续' : needsDecision ? '等待本次决定；立即发送会作废旧决定' : '下一个工具边界合并发送'}</span></div>{task.queuedInput.map(item => <div className="queue-row" key={item.id}><p>{item.text}</p><button className="secondary small-button" disabled={busy || task.unknownEffect && task.status !== 'running'} onClick={() => {
               const send = async () => { const next = await bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'send' }); setSelected(next.id); };
               if (needsDecision) setLocalDecision({ title: '用补充要求替换当前决定？', detail: `将立即发送：${item.text}\n旧问题或审批将作废，不能再提交；其他排队消息继续等待。已开始的工具不会强杀或重放。`, confirmLabel: '作废旧决定并立即发送', confirm: send });
@@ -189,7 +204,7 @@ export function App() {
             }}>立即发送</button><button className="icon-button" aria-label={`删除待发送消息：${item.text}`} disabled={busy} onClick={() => void run(() => bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'delete' }))}><X size={15} /></button></div>)}</div>}
             {localDecision ? <ConsentPanel decision={localDecision} busy={busy} run={run} close={() => setLocalDecision(undefined)} />
               : needsDecision && !editingDecision ? <DecisionPanel task={task} busy={busy} hostEnabled={hostEnabled} run={run} supplement={() => setEditingDecision(true)} />
-                : <MessageComposer key={task.id} task={{ ...task, composerDraft: composerDrafts[task.id] ?? task.composerDraft }} busy={busy} run={run} sent={id => { setSelected(id); setEditingDecision(false); }} editing={needsDecision} back={() => setEditingDecision(false)} remember={text => setComposerDrafts(old => ({ ...old, [task.id]: text }))} />}
+                : <MessageComposer key={task.id} task={{ ...task, composerDraft: composerDrafts[task.id] ?? task.composerDraft }} busy={busy} run={run} sent={id => { setSelected(id); setEditingDecision(false); }} editing={needsDecision} back={() => setEditingDecision(false)} remember={text => setComposerDrafts(old => ({ ...old, [task.id]: text }))} />}</>}
           </section>
         </div>}
         {page === 'artifacts' && <div className="standard-page page-enter"><div className="page-eyebrow">可审阅，可带走</div><h1>成果库</h1><p className="page-description">经过确认的交付物集中在这里。每份成果都能回到它的来源任务。</p><div className="artifact-grid">{tasks.flatMap(t => t.artifacts.map(a => <button className="artifact-card" key={`${t.id}-${a.id}`} onClick={() => setArtifact({ task: t, artifact: a })}><span className="artifact-type"><FileText size={25} /><span>{a.name.split('.').pop()?.toUpperCase()}</span></span><h2>{a.name}</h2><p>{t.goal}</p><div><span>{bridge.preview ? '示例成果' : '已批准创建'} · {time(t.updatedAt)}</span><ArrowUpRight size={16} /></div></button>))}</div>{!tasks.some(t => t.artifacts.length) && <div className="empty-state bordered"><Layers size={30} /><h3>还没有已保存的成果</h3><p>批准任务中的写入申请后，成果会出现在这里。</p><button className="secondary" onClick={() => go('home')}>回到任务中心<ArrowUpRight size={15} /></button></div>}</div>}
@@ -211,6 +226,7 @@ export function App() {
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
       <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+        attachMaterial={tabId => { if (task && !historical) void run(() => bridge.attachMaterial({ taskId: task.id, tabId })); }}
         conversationId={task?.conversationId ?? task?.id} grantPage={(tabId, mode) => {
           const tab = workspace.tabs.find(t => t.id === tabId);
           if (!task || !tab?.url) return;
@@ -221,7 +237,7 @@ export function App() {
             detail: `${tab.url}\n目标对话：${task.goal.slice(0, 80)}\n范围：此 Tab 的 ${new URL(tab.url).origin}，包括后续执行轮次，应用重启／关闭／刷新失效。\n页面正文、元素标签与链接 URL 将发送给 DeepSeek，可能包含私人信息。${mode === 'read' ? '允许读取、切换、滚动与同站导航，不允许点击和输入。' : mode === 'ask' ? '点击和输入仍需在底部批准具体元素和内容。' : '点击和输入不再逐次确认，可能发布、提交或改变远端数据。系统不能可靠识别按钮的业务后果；文件快照不能撤销。仅用于你信任、能承担后果的页面。'}\n不读取密码控件值、Cookie 或 storage，不提供任意 JS／文件上传工具。`,
             confirmLabel: mode === 'allow' ? '确认可信交互范围' : '确认网页授权', confirm });
         }}
-        canSendPage={!!task && !needsDecision && !task.unknownEffect} sendPage={tabId => void run(async () => {
+        canSendPage={!!task && !historical && !needsDecision && !task.unknownEffect} sendPage={tabId => void run(async () => {
           if (!task || needsDecision) throw new Error('请先选择对话并完成当前决定。');
           const snapshot = await bridge.workspaceCapture({ tabId, taskId: task.id });
           if (selectedRef.current !== task.id) throw new Error('请重新读取：对话已切换。');

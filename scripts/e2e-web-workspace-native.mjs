@@ -8,7 +8,7 @@ const watchdog = setTimeout(() => { console.error('Web fixture exceeded 180 seco
 const fixture = '<!doctype html><h1>WEB_PUBLIC_EVIDENCE</h1><p>Public fixture page, not a real remote fetch.</p><form>FORM_SECRET<input value="INPUT_SECRET"></form><div style="display:none">HIDDEN_SECRET</div><script>window.PAGE_SCRIPT_SECRET="SCRIPT_SECRET"</script><a href="https://example.com/next">Next page</a>';
 async function launch() {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env: { ...process.env, AGENT47_SMOKE: '1' } }); page = await app.firstWindow();
-  await page.getByLabel('任务目标').waitFor();
+  await page.locator('.sidebar').waitFor();
   // HTTPS response fixture only; renderer, capture, IPC, runtime and DB are real.
   // Gateway DNS/TCP/TLS behavior is separately tested, not claimed by this fixture.
   await app.evaluate(({ session }, html) => {

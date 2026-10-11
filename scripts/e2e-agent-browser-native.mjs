@@ -34,7 +34,7 @@ async function nativeText() { return app.evaluate(async ({ BrowserWindow }) => {
 }); }
 try {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env: { ...process.env, AGENT47_SMOKE: '1' } });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
   await app.evaluate(({ session }, html) => { const original = session.fromPartition; session.fromPartition = function(partition, ...args) {
     const s = original.call(session, partition, ...args); if (partition.startsWith('agent47-web-')) s.protocol.handle('https', () => new Response(html, { headers: { 'content-type': 'text/html' } })); return s;
   }; }, html);

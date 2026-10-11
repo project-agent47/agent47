@@ -15,7 +15,7 @@ const report = { fixtureModel: false, pickerStub: true, platform: process.platfo
 async function launch() {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
   app.process().stderr.on('data', chunk => { for (const line of chunk.toString().split('\n')) if (line.startsWith('[model-diagnostic] ')) console.error(line); });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
   page.on('dialog', dialog => dialog.accept());
 }
 const tasks = () => page.evaluate(() => window.agent47.listTasks());

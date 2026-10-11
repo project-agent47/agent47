@@ -30,6 +30,8 @@ jobs:
         if: runner.os != 'Linux'
       - run: npm run test:agent-browser:native
         if: runner.os != 'Linux'
+      - run: npm run test:materials:native
+        if: runner.os != 'Linux'
       - run: npm audit --omit=dev
   preview:
     runs-on: ubuntu-latest
@@ -47,3 +49,4 @@ jobs:
       - run: xvfb-run -a npm run test:workspace:native
       - run: xvfb-run -a npm run test:web-workspace:native
       - run: xvfb-run -a npm run test:agent-browser:native
+      - run: xvfb-run -a npm run test:materials:native

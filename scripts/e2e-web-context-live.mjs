@@ -9,7 +9,7 @@ let app, page;
 const deadline = setTimeout(() => { console.error('Live web acceptance timed out'); app?.process().kill(); process.exit(1); }, 300000);
 async function launch() {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
 }
 try {
   await launch();
