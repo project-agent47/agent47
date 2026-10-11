@@ -13,6 +13,8 @@ Regression evidence includes two deliberately failing restore tests before their
 
 Native Windows review CI exposed the old five-second unit harness deadline in the twelve-step persisted-loop test on a heavily slowed runner. The test still asserts exactly twelve steps; the Windows harness now allows 45 seconds of polling and 60 seconds per test. No application model/host timeout, step cap or correctness assertion was relaxed. This is test-host accommodation, not a claim that synchronous database checkpoint performance has been optimized.
 
+The next Windows smoke found a settings test reading before its async write settled. The smoke now waits for actual IPC/UI state. Product settings also use partial, serialized updates so changing the host toggle cannot overwrite a newer file permission, and vice versa.
+
 ## Explicit limitations, not hidden merge claims
 
 Host execution is not an OS sandbox. Same-user filesystem race isolation is best effort, and file snapshots do not include Shell/network/remote changes. File snapshots are local plaintext protected by app/user permissions. Target-native CI runs fixtures, not paid model calls, signed installers or OS keychain certification.

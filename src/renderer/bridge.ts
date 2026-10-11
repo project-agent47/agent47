@@ -68,7 +68,7 @@ const previewBridge: AgentBridge = {
   installSkill: async () => { throw new Error('预览不安装 skill。'); },
   setSkill: async () => {},
   executionSettings: async () => clone(previewExecution),
-  setExecutionSettings: async input => { previewExecution = { hostExecution: input.hostExecution, fileMode: input.fileMode ?? previewExecution.fileMode }; emit(); },
+  setExecutionSettings: async input => { previewExecution = { hostExecution: input.hostExecution ?? previewExecution.hostExecution, fileMode: input.fileMode ?? previewExecution.fileMode }; emit(); },
   setTaskPermissions: async input => {
     const task = samples.find(t => t.id === input.taskId)!;
     task.fileMode = input.fileMode; task.hostMode = input.hostMode; emit();

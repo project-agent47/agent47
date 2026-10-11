@@ -42,7 +42,7 @@ export interface AgentBridge {
   installSkill(ticket: string): Promise<void>;
   setSkill(input: { id: string; enabled: boolean }): Promise<void>;
   executionSettings(): Promise<ExecutionSettings>;
-  setExecutionSettings(input: ExecutionSettings): Promise<void>;
+  setExecutionSettings(input: Partial<ExecutionSettings>): Promise<void>;
   setTaskPermissions(input: { taskId: string; fileMode: 'snapshot' | 'ask'; hostMode: 'ask' | 'allow' }): Promise<void>;
   restoreFile(input: { taskId: string; snapshotId: string }): Promise<void>;
   onChange(callback: () => void): () => void;

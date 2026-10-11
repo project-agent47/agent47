@@ -1,4 +1,4 @@
-import { _electron as electron } from 'playwright';
+import { _electron as electron, expect } from '@playwright/test';
 import { mkdtemp, mkdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -26,10 +26,14 @@ try {
   if ('apiKey' in settings || 'encryptedKey' in settings) throw new Error('Credential leaked through IPC');
   await page.getByRole('button', { name: '连接设置与工具', exact: true }).click();
   await page.getByLabel('默认文件权限').selectOption('ask');
+  await expect(page.getByLabel('默认文件权限')).toHaveValue('ask');
+  await expect.poll(() => page.evaluate(() => window.agent47.executionSettings())).toMatchObject({ fileMode: 'ask' });
   await page.getByRole('button', { name: '我理解风险，启用本机 Shell / JavaScript', exact: true }).click();
+  await expect(page.getByRole('button', { name: '关闭本机 Shell / JavaScript', exact: true })).toBeVisible();
   const execution = await page.evaluate(() => window.agent47.executionSettings());
   if (!execution.hostExecution || execution.fileMode !== 'ask') throw new Error('Tool settings IPC failed');
   await page.getByRole('button', { name: '关闭本机 Shell / JavaScript', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.agent47.executionSettings())).toMatchObject({ hostExecution: false, fileMode: 'ask' });
   await page.locator('.recent-item').first().click();
   await page.locator('.task-page').evaluate(el => Promise.all(el.getAnimations().map(a => a.finished)));
   await page.screenshot({ path: '.qa/electron-smoke.png' });

@@ -117,17 +117,24 @@ async function boot(): Promise<void> {
     return runtime.restoreFile(input.taskId, input.snapshotId);
   });
   handle('execution:view', () => ({ hostExecution, fileMode }));
-  handle('execution:set', async value => {
-    const input = z.object({ hostExecution: z.boolean(), fileMode: z.enum(['snapshot', 'ask']).optional() }).strict().parse(value);
-    await writeFile(join(root, 'execution.json'), JSON.stringify(input.hostExecution), { mode: 0o600 });
-    hostExecution = input.hostExecution;
-    if (!hostExecution) {
-      for (const task of store.list()) {
-        if (task.hostMode === 'allow') { task.hostMode = 'ask'; store.save(task); }
+  let executionWrite = Promise.resolve();
+  handle('execution:set', value => {
+    const input = z.object({ hostExecution: z.boolean().optional(), fileMode: z.enum(['snapshot', 'ask']).optional() }).strict()
+      .refine(settings => settings.hostExecution !== undefined || settings.fileMode !== undefined).parse(value);
+    const operation = executionWrite.then(async () => {
+      if (input.hostExecution !== undefined) {
+        await writeFile(join(root, 'execution.json'), JSON.stringify(input.hostExecution), { mode: 0o600 });
+        hostExecution = input.hostExecution;
+        if (!hostExecution) {
+          for (const task of store.list()) {
+            if (task.hostMode === 'allow') { task.hostMode = 'ask'; store.save(task); }
+          }
+        }
       }
-    }
-    if (input.fileMode) { await writeFile(join(root, 'file-mode.json'), JSON.stringify(input.fileMode), { mode: 0o600 }); fileMode = input.fileMode; }
-    changed();
+      if (input.fileMode) { await writeFile(join(root, 'file-mode.json'), JSON.stringify(input.fileMode), { mode: 0o600 }); fileMode = input.fileMode; }
+      changed();
+    });
+    executionWrite = operation.catch(() => {}); return operation;
   });
   handle('tasks:decide', value => {
     const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean() }).strict().parse(value);

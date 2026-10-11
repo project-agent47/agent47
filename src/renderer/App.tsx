@@ -215,12 +215,12 @@ export function App() {
 function ToolSettings({ settings, busy, run }: { settings: ExecutionSettings; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void> }) {
   return <section className="tool-settings" aria-label="工具设置"><h2>工具设置</h2>
     {bridge.preview && <p className="context-note">当前是交互预览。可以体验设置，但不会启用任何真实工具；桌面版使用相同入口。</p>}
-    <label>新任务的文件权限<select aria-label="默认文件权限" disabled={busy} value={settings.fileMode ?? 'snapshot'} onChange={e => void run(() => bridge.setExecutionSettings({ ...settings, fileMode: e.target.value as 'snapshot' | 'ask' }))}><option value="snapshot">自动快照，免逐文件确认（推荐）</option><option value="ask">每次修改确认</option></select></label>
+    <label>新任务的文件权限<select aria-label="默认文件权限" disabled={busy} value={settings.fileMode ?? 'snapshot'} onChange={e => void run(() => bridge.setExecutionSettings({ fileMode: e.target.value as 'snapshot' | 'ask' }))}><option value="snapshot">自动快照，免逐文件确认（推荐）</option><option value="ask">每次修改确认</option></select></label>
     <p>项目选择器明确授权读写。文件改动前保存应用私有快照，支持嵌套目录、新建文件和文本修改，不要求项目已使用 Git。已有对话的权限在任务页单独调整。</p>
     <div className="host-setting"><div><strong>Shell / JavaScript</strong><p>{settings.hostExecution ? '已启用。默认逐次确认，可在可信对话的任务页授权免重复确认。' : '未启用。文件读写和目录创建不依赖这个开关。'}</p></div>
       <button className={settings.hostExecution ? 'secondary' : 'primary'} disabled={busy} onClick={() => {
         if (!settings.hostExecution && !window.confirm('启用本机 Shell / JavaScript？它不是安全沙箱，可能访问本机文件和网络。启用后默认逐次确认；文件快照不覆盖 Shell / JavaScript 改动。')) return;
-        void run(() => bridge.setExecutionSettings({ ...settings, hostExecution: !settings.hostExecution }));
+        void run(() => bridge.setExecutionSettings({ hostExecution: !settings.hostExecution }));
       }}>{settings.hostExecution ? '关闭本机 Shell / JavaScript' : '我理解风险，启用本机 Shell / JavaScript'}</button></div>
     <p className="context-note">使用 Electron 自带 Node，不另装运行时。停止不是回滚；关闭本机执行会撤销已保存的免确认授权。</p>
   </section>;
