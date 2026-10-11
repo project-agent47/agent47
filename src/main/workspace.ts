@@ -167,6 +167,9 @@ export class Workspace {
       if (!previous || previous.id !== data.snapshotId || previous.conversationId !== this.conversation(taskId) ||
         previous.wcId !== wc.id || previous.url !== url || Date.now() - previous.at > 120000 || !region) throw new Error('请重新读取：区域引用已过期或页面变化。');
     }
+    // A failed/cancelled read may still update the isolated-world registry.
+    // Fence old refs before any async page program, not only on successful return.
+    this.browserSnapshots.delete(tabId);
     const body = z.object({ title: z.string().max(200), content: z.string().max(64000), truncated: z.boolean() }).parse(await this.browserScript(wc, browserTextScript(region ? Number(data.regionRef!.slice(1)) : undefined, region), signal));
     const contentDigest = sha256(JSON.stringify([url, region ?? 'document', body.content, body.truncated]));
     if (data.expectedDigest && data.expectedDigest !== contentDigest) throw new Error('请从 offset 0 重新读取：正文版本已变化，不能拼接旧分页。');

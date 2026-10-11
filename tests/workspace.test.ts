@@ -131,6 +131,13 @@ it('same URL navigation during extraction invalidates a read using document epoc
   });
   await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal)).rejects.toThrow('变化');
 });
+it('a failed new read revokes old action refs before a page registry can change', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'ask', tab.url!);
+  const first = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as { snapshotId: string };
+  execute.mockRejectedValueOnce(new Error('Page script failed'));
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal)).rejects.toThrow('Page script failed');
+  await expect(workspace.browserPrepare(taskId, { toolCallId: 'stale-after-failure', toolName: 'browserClick', input: { tabId: tab.id, snapshotId: first.snapshotId, ref: 'e0' } })).rejects.toThrow('过期');
+});
 it('switching away from target tab cancels wait rather than reading hidden tabs', async () => {
   const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
   const waiting = workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 1000 }, new AbortController().signal);
