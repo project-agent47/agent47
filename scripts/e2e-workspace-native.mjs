@@ -20,12 +20,18 @@ await writeFile(join(root, 'notes.md'), '# 本地 Markdown\n\n| 功能 | 验收 
 await writeFile(join(root, 'example.ts'), 'export const evidence = "MONACO_NATIVE_OK";\n');
 await writeFile(join(root, 'report.pdf'), '%PDF-1.0 test');
 let app, page;
+const watchdog = setTimeout(() => {
+  console.error('Workspace native acceptance exceeded 180 seconds');
+  app?.process().kill(); server.close(); process.exit(1);
+}, 180000);
 const report = { platform: process.platform, nativePickerStub: true, modelInvoked: false, cases: [] };
 async function launch() {
+  console.log('workspace: launch');
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env: { ...process.env, AGENT47_SMOKE: '1' } });
   page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
 }
 async function open(name) {
+  console.log('workspace: open ' + name);
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, join(root, name));
   await page.getByRole('button', { name: '打开文件', exact: true }).click();
   await expect(page.getByRole('tab', { name, exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -35,6 +41,7 @@ async function doc() {
 }
 try {
   await launch(); await open('offline.html');
+  console.log('workspace: inspect native HTML');
   await expect.poll(async () => (await doc()).length).toBe(1);
   const target = (await doc())[0];
   await expect.poll(async () => (await doc())[0]?.visible).toBe(true);
@@ -62,6 +69,7 @@ try {
   await writeFile('.qa/workspace-native-html-surface.png', Buffer.from(surface, 'base64'));
   report.cases.push({ name: 'actual native HTML inline JS; Node/process/IPC absent; HTTP resources/forms/iframes/popups denied', passed: true, networkRequests: requests });
   await page.getByRole('button', { name: '停止 HTML 运行', exact: true }).click();
+  console.log('workspace: stopped native HTML');
   await expect.poll(async () => (await doc()).length).toBe(0);
   report.cases.push({ name: 'stop destroys native WebContents, not merely hides it', passed: true });
   await page.getByLabel('刷新当前文档').click(); await expect.poll(async () => (await doc()).length).toBe(1);
@@ -82,7 +90,9 @@ try {
   await page.getByLabel('刷新当前文档').click();
   await expect(page.locator('.view-lines')).toContainText('EXTERNAL_NEW_VERSION');
   await page.getByLabel('标签左移').click();
+  console.log('workspace: closing for restart');
   await app.close(); app = undefined; await launch();
+  console.log('workspace: restarted');
   const restored = await page.evaluate(() => window.agent47.workspaceView());
   if (restored.tabs.length !== before.tabs.length || restored.tabs.find(t => t.name === 'example.ts').content !== 'export const evidence = "EXTERNAL_NEW_VERSION";\n') throw new Error('Workspace restart snapshot failed');
   await expect(page.locator('.view-lines')).toContainText('EXTERNAL_NEW_VERSION', { timeout: 30000 });
@@ -92,6 +102,7 @@ try {
   await page.getByRole('button', { name: '用系统默认查看器打开', exact: true }).click();
   report.cases.push({ name: 'unsupported PDF system-viewer routing', passed: true, systemLaunchStub: true });
   await page.getByRole('tab', { name: 'offline.html', exact: true }).click();
+  console.log('workspace: resize/hide/close');
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1000, 740));
   await expect.poll(async () => { const b = await page.locator('.workspace-body').boundingBox(); return Math.round(b.width); }).toBeGreaterThan(200);
   await page.getByLabel('收起工作区').click();
@@ -103,4 +114,4 @@ try {
   report.cases.push({ name: 'native layout/hide/close lifecycle and local viewing does not create model tasks', passed: true });
   report.result = 'WORKSPACE_NATIVE_SECURITY_OK'; await writeFile('.qa/workspace-native-results.json', JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 } catch (e) { console.error('Workspace native acceptance failed:', e.message); if (page) await page.screenshot({ path: '.qa/workspace-native-failure.png' }).catch(() => {}); process.exitCode = 1; }
-finally { if (app) await app.close(); await new Promise(r => server.close(r)); }
+finally { console.log('workspace: final cleanup'); if (app) await app.close(); await new Promise(r => server.close(r)); clearTimeout(watchdog); }
