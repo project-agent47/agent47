@@ -68,7 +68,7 @@ test('home controls, filters, folder grant, mode guidance, create and stop', asy
   await page.getByLabel('开始任务', { exact: true }).click();
   await page.getByRole('button', { name: '停止任务' }).click();
   await expect(page.locator('.task-title .status')).toHaveText('已停止');
-  await page.getByRole('button', { name: '带入新任务' }).click();
+  await page.getByRole('button', { name: '带入独立新任务' }).click();
   await expect(page.getByLabel('任务目标')).toHaveValue('Verify preview cancellation');
   await page.getByLabel('开始任务', { exact: true }).click();
   await expect(page.getByText('这是交互预览，没有调用模型或读取文件。', { exact: false })).toBeVisible();
