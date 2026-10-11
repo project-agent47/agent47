@@ -116,6 +116,8 @@ async function boot(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   handle('tasks:list', () => runtime.list());
+  handle('navigation:last-run', () => store.lastRun());
+  handle('navigation:remember-run', value => store.rememberRun(value === undefined ? undefined : idSchema.parse(value)));
   const materialTickets = new Map<string, { material: import('../core/materials').MaterialSnapshot; at: number }>();
   handle('materials:discard', value => { materialTickets.delete(idSchema.parse(value)); });
   handle('materials:prepare', async () => {

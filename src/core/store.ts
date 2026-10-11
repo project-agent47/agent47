@@ -78,6 +78,14 @@ export class TaskStore {
     this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify({ ...task, ...(task.materialSnapshots ? { materialSnapshots: pointers } : {}) }));
   }
   command(id: string): string | undefined { return this.db.prepare('SELECT task_id FROM commands WHERE id=?').get(id)?.task_id as string | undefined; }
+  lastRun(): string | undefined {
+    const id = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('last-run')?.value as string | undefined;
+    return id && this.db.prepare('SELECT id FROM tasks WHERE id=?').get(id) ? id : undefined;
+  }
+  rememberRun(id?: string): void {
+    if (id) { this.get(id); this.db.prepare('INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('last-run', id); }
+    else this.db.prepare('DELETE FROM metadata WHERE key=?').run('last-run');
+  }
   saveCommand(id: string, task: TaskRecord, parent?: TaskRecord): void {
     this.db.exec('BEGIN IMMEDIATE');
     try { if (parent) this.save(parent); this.save(task); this.db.prepare('INSERT INTO commands VALUES (?,?)').run(id, task.id); this.db.exec('COMMIT'); }

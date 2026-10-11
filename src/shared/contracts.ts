@@ -47,6 +47,8 @@ export interface ProviderView { baseURL: string; model: string; configured: bool
 export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[] }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  lastRun(): Promise<string | undefined>;
+  rememberRun(id?: string): Promise<void>;
   prepareMaterial(): Promise<{ ticket: string; material: MaterialView } | undefined>;
   discardMaterialTicket(ticket: string): Promise<void>;
   chooseMaterial(taskId: string): Promise<TaskView>;

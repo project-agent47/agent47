@@ -86,6 +86,8 @@ it('material table stores one immutable body across round checkpoints', async ()
   expect(db.prepare('SELECT COUNT(*) AS count FROM material_versions').get()?.count).toBe(1);
   expect(String(db.prepare('SELECT body FROM tasks WHERE id=?').get(second.id)?.body)).not.toContain(m.content);
   expect(store.get(second.id).materialSnapshots?.[m.id].content).toBe(m.content);
+  store.rememberRun(second.id); expect(store.lastRun()).toBe(second.id);
+  store.rememberRun(); expect(store.lastRun()).toBeUndefined();
   const bad = store.get(second.id); bad.materialSnapshots = { [m.id]: { ...m, content: 'different', bytes: 9 } };
   expect(() => store.save(bad)).toThrow('Immutable material');
 });

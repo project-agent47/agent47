@@ -3,6 +3,8 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  lastRun: () => ipcRenderer.invoke('navigation:last-run'),
+  rememberRun: id => ipcRenderer.invoke('navigation:remember-run', id),
   prepareMaterial: () => ipcRenderer.invoke('materials:prepare'),
   discardMaterialTicket: ticket => ipcRenderer.invoke('materials:discard', ticket),
   chooseMaterial: id => ipcRenderer.invoke('materials:choose', id),

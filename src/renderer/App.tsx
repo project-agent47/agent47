@@ -29,9 +29,8 @@ function time(value: string) { return new Date(value).toLocaleTimeString('zh-CN'
 export function App() {
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [page, setPage] = useState<Page>('home');
-  const [selected, setSelected] = useState<string | undefined>(() => {
-    try { return bridge.preview ? undefined : localStorage.getItem('agent47:last-run') ?? undefined; } catch { return undefined; }
-  });
+  const [selected, setSelected] = useState<string>();
+  const [selectionLoaded, setSelectionLoaded] = useState(bridge.preview);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const [goal, setGoal] = useState('');
@@ -59,7 +58,10 @@ export function App() {
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const needsDecision = !!task && (['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
   useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
-  useEffect(() => { if (!bridge.preview) try { if (selected) localStorage.setItem('agent47:last-run', selected); else localStorage.removeItem('agent47:last-run'); } catch { /* Storage disabled; task checkpoints remain authoritative. */ } }, [selected]);
+  useEffect(() => {
+    if (!bridge.preview) void bridge.lastRun().then(id => { setSelected(value => value ?? id); setSelectionLoaded(true); }).catch(() => setSelectionLoaded(true));
+  }, []);
+  useEffect(() => { if (selectionLoaded && !bridge.preview) void bridge.rememberRun(selected).catch(() => setError('未能保存打开位置；任务记录仍保留。')); }, [selected, selectionLoaded]);
   useEffect(() => { if (!needsDecision) setEditingDecision(false); }, [needsDecision]);
   const pending = tasks.filter(t => t.status === 'awaiting_approval').length;
   const active = tasks.filter(t => ['running', 'queued'].includes(t.status)).length;

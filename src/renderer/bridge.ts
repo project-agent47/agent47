@@ -44,6 +44,8 @@ const preparedMaterials = new Map<string, import('../shared/contracts').Material
 const materialContents = new Map<string, string>();
 const previewBridge: AgentBridge = {
   preview: true,
+  lastRun: async () => undefined,
+  rememberRun: async () => {},
   discardMaterialTicket: async ticket => { preparedMaterials.delete(ticket); },
   prepareMaterial: async () => {
     const ticket = crypto.randomUUID(), content = '# 示例材料\n\n预览不读取真实文件，也不调用模型。';
