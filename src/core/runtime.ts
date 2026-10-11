@@ -13,9 +13,10 @@ import { relative, isAbsolute, sep, resolve } from 'node:path';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
-  skills?: { catalog(): unknown[]; load(id: string): unknown; read(id: string, path: string): Promise<unknown> };
+  skills?: { catalog(): unknown[]; load(id: string, hash?: string): unknown; read(id: string, path: string, hash?: string): Promise<unknown> };
   contextThreshold?: number;
   fileMode?: () => 'snapshot' | 'ask'; snapshots?: FileSnapshots;
+  readWeb?: (url: string, origins: string[], signal: AbortSignal) => Promise<unknown>;
 }
 
 const terminal = new Set(['completed', 'failed', 'cancelled']);
@@ -32,6 +33,8 @@ export class TaskRuntime {
   private stopped = false;
   private drafts = new Map<string, { text: string; reasoning: string }>();
   private restoringRoots = new Set<string>();
+  private modelControllers = new Map<string, AbortController>();
+  private interrupted = new Set<string>();
   constructor(readonly store: TaskStore, private model: ModelDriver, private artifactRoot: string, private changed: () => void = () => {}, private services: RuntimeServices = {}) {}
   start(): void {
     for (const task of this.store.list()) {
@@ -62,31 +65,63 @@ export class TaskRuntime {
     this.event(task, 'user', task.goal); this.save(task); this.kick();
     return publicTask(task);
   }
-  send(id: string, text: string, mode: 'steer' | 'followup', commandId: string): TaskView {
+  send(id: string, text: string, mode: 'queue' | 'steer' | 'followup', commandId: string): TaskView {
     if (!text.trim() || text.length > 12000) throw new Error('Invalid message');
     const prior = this.store.command(commandId);
     if (prior) return publicTask(this.store.get(prior));
     let task = this.store.get(id);
     if (task.root && [...this.restoringRoots].some(other => overlappingRoots(task.root!, other))) throw new Error('请等待文件快照恢复完成。');
-    if (task.effectStarted) throw new Error('Inspect unknown host effects before continuing');
+    if (task.effectStarted && (task.status !== 'running' || !this.active.has(id))) throw new Error('Inspect unknown host effects before continuing');
     if (terminal.has(task.status)) {
       const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
       if (latest?.id !== id) throw new Error('Conversation already continued; open the latest run');
-      task = this.fork(task, text);
-      this.store.saveCommand(commandId, task); this.changed(); this.kick(); return publicTask(task);
+      const parent = task;
+      const hadQueue = !!parent.queuedInput?.length;
+      task = this.fork(parent, text, true); if (hadQueue) parent.queuedInput = [];
+      this.store.saveCommand(commandId, task, hadQueue ? parent : undefined); this.changed(); this.kick(); return publicTask(task);
     }
     if (task.status === 'awaiting_reconciliation') throw new Error('Inspect unknown host effects before continuing');
     if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser') {
       this.toolResult(task, task.pending[0], { answer: text.trim(), fromUser: true });
       task.question = undefined; task.status = 'queued'; this.event(task, 'user', text.trim());
     } else {
+      if ((task.queuedInput?.length ?? 0) >= 32) throw new Error('Task queue full: remove or deliver pending messages first');
       task.queuedInput ??= []; task.queuedInput.push({ id: commandId, text: text.trim(), mode });
       if (task.status === 'awaiting_approval' && mode === 'steer') {
         if (task.approval) task.approval.state = 'denied';
         task.status = 'queued';
       }
     }
-    this.store.saveCommand(commandId, task); this.changed(); this.kick(); return publicTask(task);
+    this.store.saveCommand(commandId, task);
+    if (mode === 'steer') this.interruptModel(id);
+    this.changed(); this.kick(); return publicTask(task);
+  }
+  private interruptModel(id: string): void {
+    const controller = this.modelControllers.get(id);
+    if (controller) { this.interrupted.add(id); controller.abort(); }
+  }
+  manageQueue(id: string, messageId: string, action: 'delete' | 'send'): TaskView {
+    const task = this.store.get(id);
+    const item = task.queuedInput?.find(input => input.id === messageId);
+    if (!item) throw new Error('Task not queued: message was already delivered or removed');
+    if (action === 'delete') {
+      task.queuedInput = task.queuedInput!.filter(input => input.id !== messageId); this.save(task); return publicTask(task);
+    }
+    if (task.status === 'awaiting_reconciliation' || (task.effectStarted && (task.status !== 'running' || !this.active.has(id)))) throw new Error('请先检查未知执行效果。');
+    if (terminal.has(task.status)) {
+      const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
+      if (latest?.id !== id) throw new Error('Task not latest: open latest run');
+      const child = this.fork(task, item.text);
+      // Stopped queues are carried, never silently dispatched on restart.
+      child.queuedInput = task.queuedInput!.filter(input => input.id !== messageId);
+      task.queuedInput = []; this.store.saveContinuation(messageId, child, task); this.changed(); this.kick(); return publicTask(child);
+    }
+    item.mode = 'steer';
+    if (task.status === 'awaiting_approval' || task.status === 'awaiting_input') {
+      task.status = 'queued'; task.question = undefined;
+      if (task.approval) task.approval.state = 'denied';
+    }
+    this.save(task); this.interruptModel(id); this.kick(); return publicTask(task);
   }
   setPermissions(id: string, fileMode: 'snapshot' | 'ask', hostMode: 'ask' | 'allow'): void {
     const task = this.store.get(id);
@@ -96,6 +131,9 @@ export class TaskRuntime {
     this.event(task, 'system', `工具权限：文件 ${fileMode === 'snapshot' ? '自动备份并修改' : '逐次确认'}；本机执行 ${hostMode === 'allow' ? '本次对话免确认（非沙箱）' : '逐次确认'}。`);
     if (task.status === 'awaiting_approval') task.status = 'queued';
     this.save(task); this.kick();
+  }
+  setWebOrigins(id: string, origins: string[]): void {
+    const task = this.store.get(id); task.webOrigins = [...new Set(origins)]; this.save(task);
   }
   async restoreFile(id: string, snapshotId: string): Promise<void> {
     const task = this.store.get(id);
@@ -193,18 +231,20 @@ export class TaskRuntime {
     }
     return result;
   }
-  private fork(parent: TaskRecord, text: string): TaskRecord {
+  private fork(parent: TaskRecord, text: string, includeQueued = false): TaskRecord {
     const now = new Date().toISOString();
     const messages = structuredClone(parent.messages);
     for (const call of parent.pending) messages.push({ role: 'tool', content: [{ type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName, output: { type: 'error-text', value: 'Prior run ended. This intent must not be replayed.' } }] });
+    if (includeQueued) for (const input of parent.queuedInput ?? []) messages.push({ role: 'user', content: input.text });
     messages.push({ role: 'user', content: text.trim() });
     const task: TaskRecord = {
       id: randomUUID(), goal: text.trim(), skill: parent.skill, root: parent.root, status: 'queued',
       createdAt: now, updatedAt: now, events: structuredClone(parent.events), artifacts: [], steps: 0, pending: [], messages,
       conversationId: parent.conversationId ?? parent.id, goalId: parent.goalId ?? parent.id, parentRunId: parent.id,
       runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? []),
-      fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: []
+      fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
+    if (includeQueued) for (const input of parent.queuedInput ?? []) this.event(task, 'user', input.text);
     this.event(task, 'system', `开始第 ${task.runNumber} 轮执行；旧执行轮次保持不变。`);
     this.event(task, 'user', text.trim()); return task;
   }
@@ -255,6 +295,7 @@ export class TaskRuntime {
       output: error ? { type: 'error-text', value: String(value) } : { type: 'json', value: JSON.parse(JSON.stringify(value)) }
     }] };
     task.messages.push(message); task.pending.shift();
+    task.inputBoundary = true;
   }
   private async invoke(task: TaskRecord, messages: import('ai').ModelMessage[], signal: AbortSignal, purpose: 'turn' | 'compaction'): Promise<ModelStep> {
     const id = randomUUID();
@@ -263,14 +304,15 @@ export class TaskRuntime {
     const draft = { text: '', reasoning: '' }; this.drafts.set(task.id, draft);
     const context: ModelContext = {
       purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
-      catalog: JSON.stringify(this.services.skills?.catalog() ?? []),
+      catalog: JSON.stringify(this.services.skills?.catalog() ?? []), webOrigins: task.webOrigins ?? [],
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
         if (purpose === 'turn') { draft[kind] = (draft[kind] + text).slice(0, 1_000_000); this.changed(); }
       }
     };
+    const modelController = new AbortController(); this.modelControllers.set(task.id, modelController);
     try {
-      const result = await this.model(messages, task.conversationId ?? task.id, signal, task.skill, context);
+      const result = await this.model(messages, task.conversationId ?? task.id, AbortSignal.any([signal, modelController.signal]), task.skill, context);
       const current = this.store.get(task.id);
       const index = current.usage!.findIndex(item => item.id === id);
       current.usage![index] = { id, at: current.usage![index].at, purpose, ...(result.usage ?? { state: 'unknown' }) };
@@ -280,7 +322,7 @@ export class TaskRuntime {
       const usage = current.usage?.find(item => item.id === id);
       if (usage?.state === 'pending') { usage.state = 'unknown'; this.save(current); }
       throw error;
-    } finally { this.drafts.delete(task.id); this.changed(); }
+    } finally { this.modelControllers.delete(task.id); this.drafts.delete(task.id); this.changed(); }
   }
   private async compact(task: TaskRecord, signal: AbortSignal): Promise<void> {
     const projection = projectedMessages(task);
@@ -310,12 +352,13 @@ export class TaskRuntime {
       while (!this.stopped && !controller.signal.aborted) {
         task = this.store.get(id);
         if (task.status === 'cancelled') return;
-        const steering = task.queuedInput?.filter(item => item.mode === 'steer') ?? [];
+        const steering = task.queuedInput?.filter(item => item.mode === 'steer' || (item.mode === 'queue' && (!task.pending.length || task.inputBoundary))) ?? [];
         if (steering.length) {
           while (task.pending.length) this.toolResult(task, task.pending[0], 'User changed requirements; pending intent superseded. Do not execute it.', true);
           if (task.approval?.state === 'pending' || task.approval?.state === 'approved') task.approval.state = 'denied';
           for (const input of steering) { task.messages.push({ role: 'user', content: input.text }); this.event(task, 'user', input.text); }
-          task.queuedInput = task.queuedInput?.filter(item => item.mode !== 'steer'); this.save(task);
+          task.queuedInput = task.queuedInput?.filter(item => !steering.some(delivered => delivered.id === item.id));
+          task.inputBoundary = false; this.save(task);
         }
         if (task.pending.length) {
           const call = task.pending[0];
@@ -401,20 +444,31 @@ export class TaskRuntime {
           } else {
             try {
               let value: unknown;
-              if (call.toolName === 'listSkills') value = this.services.skills?.catalog() ?? [];
+              if (call.toolName === 'readWeb') {
+                const { url } = z.object({ url: z.string().url().max(2048) }).strict().parse(call.input);
+                if (!this.services.readWeb) throw new Error('Web reader unavailable');
+                value = await this.services.readWeb(url, task.webOrigins ?? [], controller.signal);
+                // Revocation while I/O is pending prevents content reaching the model.
+                if (JSON.stringify(this.store.get(id).webOrigins ?? []) !== JSON.stringify(task.webOrigins ?? [])) throw new Error('Web access changed while reading');
+              } else if (call.toolName === 'listSkills') value = this.services.skills?.catalog() ?? [];
               else if (call.toolName === 'loadSkill') {
                 const { id: skillId } = z.object({ id: z.string().max(64) }).strict().parse(call.input);
                 if (!this.services.skills) throw new Error('No skills installed');
-                value = this.services.skills.load(skillId); task.loadedSkills ??= []; task.loadedSkills.push(skillId);
+                value = this.services.skills.load(skillId, task.skillPins?.[skillId]);
+                const hash = (value as { hash?: string }).hash;
+                if (hash) { task.skillPins ??= {}; task.skillPins[skillId] = hash; }
+                task.loadedSkills ??= []; task.loadedSkills.push(skillId);
               } else if (call.toolName === 'readSkillFile') {
                 const input = z.object({ id: z.string().max(64), path: z.string().max(1024) }).strict().parse(call.input);
                 if (!this.services.skills) throw new Error('No skills installed');
-                value = await this.services.skills.read(input.id, input.path);
+                if (!task.skillPins?.[input.id]) throw new Error('Load skill before reading references');
+                value = await this.services.skills.read(input.id, input.path, task.skillPins[input.id]);
               } else value = await readTool(task.root, call.toolName, call.input);
               if (controller.signal.aborted || this.stopped) return;
-              const loadedSkills = task.loadedSkills;
+              const loadedSkills = task.loadedSkills, skillPins = task.skillPins;
               task = this.store.get(id);
               if (loadedSkills) task.loadedSkills = [...new Set([...(task.loadedSkills ?? []), ...loadedSkills])];
+              if (skillPins) task.skillPins = { ...task.skillPins, ...skillPins };
               this.toolResult(task, call, value);
               this.event(task, 'tool', `${call.toolName} · ${JSON.stringify(call.input)}`);
             } catch (error) {
@@ -427,11 +481,17 @@ export class TaskRuntime {
           this.save(task); continue;
         }
         if (task.steps >= 12) throw new Error('Reached the 12-step budget. Review progress and start a narrower task.');
-        await this.compact(task, controller.signal);
+        try { await this.compact(task, controller.signal); }
+        catch (error) { if (this.interrupted.delete(id)) continue; throw error; }
         if (controller.signal.aborted || this.stopped) return;
         task = this.store.get(id);
+        if (task.queuedInput?.some(item => item.mode !== 'followup')) continue;
+        task.inputBoundary = false;
         task.context = { compactions: task.compactions?.length ?? 0, estimatedTokens: estimateTokens(projectedMessages(task)), keptFrom: task.compactions?.at(-1)?.keptFrom ?? 0 };
-        const step = await this.invoke(task, projectedMessages(task), controller.signal, 'turn');
+        let step: ModelStep;
+        try { step = await this.invoke(task, projectedMessages(task), controller.signal, 'turn'); }
+        catch (error) { if (this.interrupted.delete(id)) continue; throw error; }
+        this.interrupted.delete(id);
         if (controller.signal.aborted || this.stopped) return;
         task = this.store.get(id);
         const prior = new Set(task.messages.flatMap(message => message.role === 'assistant' && Array.isArray(message.content)
@@ -445,7 +505,7 @@ export class TaskRuntime {
         if (step.text) this.event(task, 'assistant', step.text);
         if (!step.calls.length) {
           if (!step.text.trim()) throw new Error('Model returned no answer or tool calls');
-          if (task.queuedInput?.some(item => item.mode === 'steer')) { this.save(task); continue; }
+          if (task.queuedInput?.some(item => item.mode !== 'followup')) { this.save(task); continue; }
           task.status = 'completed'; this.event(task, 'system', '任务已完成。'); this.save(task);
           const next = task.queuedInput?.find(item => item.mode === 'followup');
           if (next) {
@@ -468,6 +528,6 @@ export class TaskRuntime {
           this.event(task, 'error', safe); this.save(task);
         }
       }
-    } finally { this.active.delete(id); }
+    } finally { this.active.delete(id); this.interrupted.delete(id); }
   }
 }

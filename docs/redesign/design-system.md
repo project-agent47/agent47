@@ -77,9 +77,11 @@ Values are designed. Color is semantic and mode-aware; type and spacing are shar
 
 ## Layout and components
 
-Desktop: 236px navigation rail, 65px header, fluid task content with 1040px reading canvas. Below 1150px the optional inspector stacks; below 760px navigation compresses and cards stack. Desktop application minimum: 900×650. Mobile 375px is preview accessibility, not a mobile application target.
+Desktop: compact 208px navigation rail and 44px header. Task history scrolls independently inside the viewport shell; the composer is docked outside that scroll container at the bottom edge. Header status, usage and folded permissions stay visible. Below 1150px the optional inspector stacks; below 760px navigation compresses and the composer remains docked. Desktop application minimum: 900×650. Mobile 375px is preview accessibility, not a mobile application target.
 
 - **Composer:** goal textarea, optional folder context, guidance selector, one submit action. Empty input disables submit; Ctrl/Cmd+Enter submits.
+- **Conversation dock:** Enter sends, Shift+Enter adds a line; IME composition is never submitted prematurely. Running messages queue above the input with individual delete and immediate-send controls; no timing selector.
+- **Tool activity:** compact expandable rows show real tool events inline. Reasoning stays collapsed; exact approval content remains inspectable inside history.
 - **Navigation:** current page indication plus recent tasks. Ctrl/Cmd+N creates a new composition; no forced workflow menu.
 - **Task row:** semantic status text, title, guidance and folder metadata; status never depends on color alone.
 - **Approval:** warning top rule, exact filename, full scrollable source content, explicit scope, expiry, paired reject/approve actions.

@@ -207,8 +207,8 @@ it('restore locks overlapping selected roots, including a running child-folder t
 });
 it('an awaited skill read does not overwrite a concurrent permission revocation', async () => {
   let step = 0, release!: () => void;
-  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('readSkillFile', { id: 'test', path: 'ref.md' }) : answer(), 'snapshot', true, {
-    skills: { catalog: () => [], load: () => ({}), read: async () => { await new Promise<void>(r => { release = r; }); return { content: 'reference' }; } }
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('loadSkill', { id: 'test' }) : step === 2 ? call('readSkillFile', { id: 'test', path: 'ref.md' }) : answer(), 'snapshot', true, {
+    skills: { catalog: () => [], load: () => ({ hash: 'a'.repeat(64) }), read: async () => { await new Promise<void>(r => { release = r; }); return { content: 'reference' }; } }
   });
   const task = runtime.create('read skill', 'general', project); await until(() => !!release);
   runtime.setPermissions(task.id, 'ask', 'ask'); release(); await until(() => runtime.list()[0].status === 'completed');
@@ -222,8 +222,8 @@ it('replays a large valid UTF-8 write using its original snapshot, not a 1MiB by
 });
 it('an awaited failed skill read also preserves a concurrent permission change', async () => {
   let step = 0, release!: () => void;
-  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('readSkillFile', { id: 'test', path: 'missing.md' }) : answer(), 'snapshot', true, {
-    skills: { catalog: () => [], load: () => ({}), read: async () => { await new Promise<void>(r => { release = r; }); throw new Error('missing'); } }
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('loadSkill', { id: 'test' }) : step === 2 ? call('readSkillFile', { id: 'test', path: 'missing.md' }) : answer(), 'snapshot', true, {
+    skills: { catalog: () => [], load: () => ({ hash: 'a'.repeat(64) }), read: async () => { await new Promise<void>(r => { release = r; }); throw new Error('missing'); } }
   });
   const task = runtime.create('read', 'general', project); await until(() => !!release);
   runtime.setPermissions(task.id, 'ask', 'ask'); release(); await until(() => runtime.list()[0].status === 'completed');

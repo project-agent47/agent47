@@ -90,6 +90,7 @@ try {
   await expect(page.getByRole('button', { name: '关闭本机 Shell / JavaScript', exact: true })).toBeVisible();
   await page.screenshot({ path: '.qa/tool-settings-desktop.png', fullPage: true, animations: 'disabled' });
   await page.locator('.recent-item').first().click();
+  await page.locator('.permission-disclosure').first().locator('summary').click();
   await page.getByLabel('本次对话执行权限').selectOption('allow');
   const command = process.platform === 'win32' ? 'echo TRUSTED_SHELL_OK_47' : 'printf TRUSTED_SHELL_OK_47';
   const text = `In this disposable coding test, the user has enabled trusted host tools. Call runCode with exactly code console.log("TRUSTED_NODE_OK_47", process.versions.node); cwd "." timeoutMs 10000. Also call runShell with exactly command ${command} cwd "." timeoutMs 10000. No file writes, no extra commands, no permissions questions. Finish by quoting both actual outputs.`;
