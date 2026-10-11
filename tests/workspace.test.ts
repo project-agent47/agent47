@@ -2,6 +2,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { TaskStore } from '../src/core/store';
 const { picker, opener } = vi.hoisted(() => ({ picker: vi.fn(), opener: vi.fn().mockResolvedValue('') }));
 vi.mock('electron', () => ({ BrowserWindow: class {}, WebContentsView: class {}, session: {}, dialog: { showOpenDialog: picker }, shell: { openPath: opener } }));
@@ -64,4 +65,48 @@ it('limits tabs and rejects unknown tab mutation identifiers', async () => {
   for (let i = 0; i < 10; i++) await importFile(`${i}.txt`, `${i}`);
   await expect(importFile('extra.txt', 'extra')).rejects.toThrow('10');
   await expect(workspace.update({ activeId: '7edb8bfc-40a8-4a21-8e60-e4c315980055' })).rejects.toThrow();
+});
+it('opens HTTPS URL tabs without importing content and restores them paused', async () => {
+  await expect(workspace.openWeb('http://example.com/')).rejects.toThrow();
+  await expect(workspace.openWeb('https://127.0.0.1/')).rejects.toThrow();
+  const first = await workspace.openWeb('https://example.com/');
+  expect(first.tabs[0]).toMatchObject({ kind: 'web', source: 'web', url: 'https://example.com/' });
+  expect(first.tabs[0].content).toBeUndefined();
+  expect((await workspace.openWeb('https://example.com/')).tabs).toHaveLength(1);
+  const reopened = new Workspace(join(root, 'workspace.json'), store, '/unused', () => undefined); await reopened.start();
+  expect(reopened.view().tabs[0].paused).toBe(true);
+  expect((await reopened.refresh(first.activeId!)).tabs[0]).toMatchObject({ paused: false, revision: 1 });
+});
+it('increments native render revision even when refreshing identical HTML', async () => {
+  const id = (await importFile('same.html', '<h1>same</h1>')).activeId!;
+  expect((await workspace.refresh(id)).tabs[0].revision).toBe(1);
+  expect((await workspace.refresh(id)).tabs[0].revision).toBe(2);
+});
+it('binds reviewed page captures to immutable tickets, digest, URL and expiry', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString();
+  store.save({ id: taskId, goal: 'Review', skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 1, events: [], artifacts: [], messages: [], pending: [] });
+  const tab = (await workspace.openWeb('https://example.com/')).tabs[0];
+  let url = tab.url!;
+  const wc = { getURL: () => url, isDestroyed: () => false, isLoading: () => false,
+    executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({ title: 'Evidence', content: 'page evidence', truncated: false }) };
+  (workspace as unknown as { views: Map<string, unknown> }).views.set(tab.id, { webContents: wc });
+  const first = await workspace.capture(tab.id, taskId);
+  expect(wc.executeJavaScriptInIsolatedWorld).toHaveBeenCalledWith(1001, expect.any(Array));
+  expect(workspace.reviewedCapture(first.id, first.digest).content).toBe('page evidence');
+  expect(() => workspace.reviewedCapture(first.id, '0'.repeat(64))).toThrow('重新审阅');
+  url = 'https://example.com/changed';
+  expect(() => workspace.reviewedCapture(first.id, first.digest)).toThrow('重新审阅');
+  url = tab.url!;
+  const next = await workspace.capture(tab.id, taskId);
+  expect(() => workspace.reviewedCapture(first.id, first.digest)).toThrow('重新审阅');
+  const captures = (workspace as unknown as { captures: Map<string, { capturedAt: string }> }).captures;
+  captures.get(next.id)!.capturedAt = new Date(Date.now() - 600001).toISOString();
+  expect(() => workspace.reviewedCapture(next.id, next.digest)).toThrow('重新审阅');
+});
+it('rejects oversized in-page URL changes before extracting or budgeting content', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString();
+  store.save({ id: taskId, goal: 'Review', skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 1, events: [], artifacts: [], messages: [], pending: [] });
+  const tab = (await workspace.openWeb('https://example.com/')).tabs[0], extract = vi.fn();
+  (workspace as unknown as { views: Map<string, unknown> }).views.set(tab.id, { webContents: { getURL: () => 'https://example.com/#' + 'x'.repeat(3000), isDestroyed: () => false, isLoading: () => false, executeJavaScriptInIsolatedWorld: extract } });
+  await expect(workspace.capture(tab.id, taskId)).rejects.toThrow('较短'); expect(extract).not.toHaveBeenCalled();
 });

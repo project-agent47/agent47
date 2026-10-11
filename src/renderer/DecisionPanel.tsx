@@ -6,11 +6,11 @@ import { bridge } from './bridge';
 import { Markdown } from './Markdown';
 
 type Run = (operation: () => Promise<unknown>) => Promise<void>;
-export interface LocalDecision { title: string; detail: string; confirmLabel: string; confirm: () => Promise<unknown> }
+export interface LocalDecision { title: string; detail: string; confirmLabel: string; confirm: () => Promise<unknown>; preview?: string }
 export function ConsentPanel({ decision, busy, run, close }: { decision: LocalDecision; busy: boolean; run: Run; close: () => void }) {
   return <section className="decision-panel" aria-label="授权确认">
     <div className="decision-heading"><ShieldCheck size={16} /><h2>{decision.title}</h2></div>
-    <div className="decision-body"><p className="decision-detail">{decision.detail}</p></div>
+    <div className="decision-body"><p className="decision-detail">{decision.detail}</p>{decision.preview !== undefined && <details open><summary>将发送的完整摘录</summary><pre className="page-excerpt">{decision.preview}</pre></details>}</div>
     <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={close}>取消</button>
       <button className="primary small-button" disabled={busy} onClick={() => void run(async () => { await decision.confirm(); close(); })}>{decision.confirmLabel}</button></div>
   </section>;

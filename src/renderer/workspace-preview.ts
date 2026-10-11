@@ -10,6 +10,13 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
 }
 export const previewWorkspace = {
   view: async () => clone(),
+  web: async (value: string) => {
+    const url = new URL(value); if (url.protocol !== 'https:' || url.username || url.password) throw new Error('请使用公共 HTTPS 网页。');
+    const existing = state.tabs.find(t => t.url === url.href);
+    if (existing) state.activeId = existing.id;
+    else { const tab = { id: crypto.randomUUID(), name: url.hostname, kind: 'web' as const, source: 'web' as const, url: url.href, sha256: '0'.repeat(64), status: '示例网页，不联网' }; state.tabs.push(tab); state.activeId = tab.id; }
+    state.visible = true; return clone();
+  },
   open: async (input: WorkspaceSource, tasks: TaskView[]) => {
     const task = tasks.find(t => t.id === input.taskId)!;
     if (input.kind === 'proposal') return add(task.approval!.name, task.approval!.content, 'proposal', task.id);

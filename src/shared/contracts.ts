@@ -52,6 +52,9 @@ export interface AgentBridge {
   workspaceRefresh(id: string): Promise<WorkspaceState>;
   workspaceSystemOpen(id: string): Promise<void>;
   workspaceLayout(input: { tabId?: string; bounds?: { x: number; y: number; width: number; height: number } }): Promise<void>;
+  workspaceWebOpen(url: string): Promise<WorkspaceState>;
+  workspaceCapture(input: { tabId: string; taskId: string }): Promise<PageCapture>;
+  workspaceSendCapture(input: { id: string; digest: string; clientMessageId: string }): Promise<TaskView>;
   preview: boolean;
   listTasks(): Promise<TaskView[]>;
   createTask(input: CreateInput): Promise<TaskView>;
@@ -85,6 +88,7 @@ export interface AgentBridge {
   onChange(callback: () => void): () => void;
 }
 export type WorkspaceSource = { kind: 'artifact'; taskId: string; artifactId: string } | { kind: 'proposal'; taskId: string; approvalId: string; digest: string };
-export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported'; content?: string; sha256: string; source: 'artifact' | 'proposal' | 'file'; taskId?: string; status?: string; paused?: boolean }
+export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported' | 'web'; content?: string; sha256: string; source: 'artifact' | 'proposal' | 'file' | 'web'; taskId?: string; status?: string; paused?: boolean; url?: string; revision?: number }
+export interface PageCapture { id: string; tabId: string; taskId: string; url: string; title: string; content: string; capturedAt: string; digest: string; truncated: boolean }
 export interface WorkspaceState { tabs: WorkspaceTab[]; activeId?: string; width: number; visible: boolean }
 declare global { interface Window { agent47?: AgentBridge } }

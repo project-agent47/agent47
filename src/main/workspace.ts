@@ -4,20 +4,23 @@ import { readFile, writeFile, rename, lstat, realpath, open } from 'node:fs/prom
 import { basename, extname, resolve } from 'node:path';
 import { z } from 'zod';
 import { constants } from 'node:fs';
-import type { WorkspaceSource, WorkspaceState } from '../shared/contracts';
+import type { WorkspaceSource, WorkspaceState, PageCapture } from '../shared/contracts';
 import { TaskStore } from '../core/store';
 import { artifactPath, sha256 } from '../core/tools';
 import { classifyDocument, documentHTML, validDocumentRequest } from '../shared/documents';
+import { webOrigin } from './web';
+import { publicProxy } from './public-proxy';
+import { capturePageScript, pageMessage } from '../shared/web-capture';
 
 const sourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('artifact'), taskId: z.string().uuid(), artifactId: z.string().min(1).max(128) }).strict(),
   z.object({ kind: z.literal('proposal'), taskId: z.string().uuid(), approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
 ]);
 const tabSchema = z.object({
-  id: z.string().uuid(), name: z.string().min(1).max(255), kind: z.enum(['html', 'markdown', 'code', 'unsupported']),
+  id: z.string().uuid(), name: z.string().min(1).max(255), kind: z.enum(['html', 'markdown', 'code', 'unsupported', 'web']),
   content: z.string().max(1_000_000).optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
-  source: z.enum(['artifact', 'proposal', 'file']), taskId: z.string().uuid().optional(), status: z.string().max(100).optional(),
-  path: z.string().max(4096).optional(), origin: sourceSchema.optional(), paused: z.boolean().optional()
+  source: z.enum(['artifact', 'proposal', 'file', 'web']), taskId: z.string().uuid().optional(), status: z.string().max(100).optional(),
+  path: z.string().max(4096).optional(), origin: sourceSchema.optional(), paused: z.boolean().optional(), url: z.string().url().max(2048).optional(), revision: z.number().int().nonnegative().optional()
 }).strict();
 type SavedTab = z.infer<typeof tabSchema>;
 const stateSchema = z.object({ tabs: z.array(tabSchema).max(10), activeId: z.string().uuid().optional(), width: z.number().int().min(280).max(1000), visible: z.boolean() }).strict();
@@ -30,7 +33,9 @@ export class Workspace {
   private writes = Promise.resolve();
   private layouts = Promise.resolve();
   private layoutGeneration = 0;
-  constructor(private path: string, private store: TaskStore, private artifactRoot: string, private owner: () => BrowserWindow | undefined) {}
+  private proxies = new Map<string, Awaited<ReturnType<typeof publicProxy>>>();
+  private captures = new Map<string, PageCapture>();
+  constructor(private path: string, private store: TaskStore, private artifactRoot: string, private owner: () => BrowserWindow | undefined, private changed = () => {}) {}
   async start() {
     let text: string;
     try { text = await readFile(this.path, 'utf8'); }
@@ -38,6 +43,7 @@ export class Workspace {
     this.state = stateSchema.parse(JSON.parse(text));
     if (this.state.activeId && !this.state.tabs.some(t => t.id === this.state.activeId)) throw new Error('Invalid workspace active tab');
     for (const tab of this.state.tabs) if (tab.content !== undefined && sha256(tab.content) !== tab.sha256) throw new Error('Workspace integrity failure');
+    for (const tab of this.state.tabs) if (tab.kind === 'web') { webOrigin(tab.url!); tab.paused = true; tab.status = '重启后暂停，刷新才重新联网'; }
     // Native HTML pages are created only when the renderer explicitly lays out a visible tab.
   }
   view(): WorkspaceState {
@@ -73,6 +79,36 @@ export class Workspace {
     return { name: a.name, content: a.content, sha256: a.sha256, kind: classifyDocument(a.name), source: 'artifact', taskId: task.id, origin: source, path };
   }
   async openSource(source: WorkspaceSource) { return this.add(await this.fromSource(source)); }
+  async openWeb(value: string) {
+    const url = z.string().url().max(2048).parse(value); webOrigin(url);
+    return this.add({ name: new URL(url).hostname.slice(0, 255), kind: 'web', source: 'web', url, sha256: sha256(url), status: '独立临时网页会话 · 不自动入模' });
+  }
+  async capture(tabId: string, taskId: string): Promise<PageCapture> {
+    this.store.get(taskId);
+    const tab = this.state.tabs.find(t => t.id === tabId), wc = this.views.get(tabId)?.webContents;
+    if (!tab || tab.kind !== 'web' || tab.paused || this.state.activeId !== tabId || !this.state.visible || !wc || wc.isDestroyed() || wc.isLoading()) throw new Error('请等待当前网页加载完成。');
+    const url = wc.getURL(); if (url.length > 2048) throw new Error('请使用较短的网页地址。'); webOrigin(url);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('请重试或停止页面：正文提取超时。')), 8000); });
+    let extracted: unknown;
+    try { extracted = await Promise.race([wc.executeJavaScriptInIsolatedWorld(1001, [{ code: capturePageScript }]), timeout]); }
+    finally { clearTimeout(timer); }
+    const raw = z.object({ title: z.string().max(200), content: z.string().max(8000), truncated: z.boolean() }).parse(extracted);
+    if (wc.isDestroyed() || wc.getURL() !== url || this.state.activeId !== tabId) throw new Error('请重新读取：当前网页已变化。');
+    if (!raw.content.trim()) throw new Error('请使用有可读正文的网页。');
+    const snapshot = { ...raw, url, capturedAt: new Date().toISOString(), digest: '' };
+    while (pageMessage(snapshot).length > 11000) { snapshot.content = snapshot.content.slice(0, Math.floor(snapshot.content.length * 0.9)); snapshot.truncated = true; }
+    snapshot.digest = sha256(JSON.stringify(snapshot));
+    for (const [id, old] of this.captures) if (Date.now() - Date.parse(old.capturedAt) > 600000 || old.tabId === tabId && old.taskId === taskId) this.captures.delete(id);
+    if (this.captures.size >= 20) throw new Error('请稍后重试：待审阅页面过多。');
+    const result = { ...snapshot, id: randomUUID(), tabId, taskId }; this.captures.set(result.id, result); return { ...result };
+  }
+  reviewedCapture(id: string, digest: string) {
+    const snapshot = this.captures.get(id), tab = this.state.tabs.find(t => t.id === snapshot?.tabId);
+    const wc = snapshot && this.views.get(snapshot.tabId)?.webContents;
+    if (!snapshot || snapshot.digest !== digest || Date.now() - Date.parse(snapshot.capturedAt) > 600000 || !tab || tab.paused || !wc || wc.isDestroyed() || wc.getURL() !== snapshot.url) throw new Error('请重新审阅：页面、版本或有效期已变化。');
+    return { ...snapshot };
+  }
   private async fromFile(path: string): Promise<Omit<SavedTab, 'id'>> {
     const name = basename(path), kind = classifyDocument(name);
     if (sensitive.test(name) || await realpath(path) !== resolve(path) || (await lstat(path)).isSymbolicLink()) throw new Error('请勿导入敏感文件或符号链接。');
@@ -108,7 +144,7 @@ export class Workspace {
     const input = z.object({ activeId: z.string().uuid().optional(), closeId: z.string().uuid().optional(), pauseId: z.string().uuid().optional(), moveId: z.string().uuid().optional(),
       direction: z.union([z.literal(-1), z.literal(1)]).optional(), width: z.number().int().min(280).max(1000).optional(), visible: z.boolean().optional() }).strict().parse(value);
     if (input.activeId) { if (!this.state.tabs.some(t => t.id === input.activeId)) throw new Error('Task not found'); this.state.activeId = input.activeId; }
-    if (input.pauseId) { const tab = this.state.tabs.find(t => t.id === input.pauseId); if (tab?.kind !== 'html') throw new Error('Task not found'); this.destroy(tab.id); tab.paused = true; }
+    if (input.pauseId) { const tab = this.state.tabs.find(t => t.id === input.pauseId); if (!tab || !['html', 'web'].includes(tab.kind)) throw new Error('Task not found'); this.destroy(tab.id); tab.paused = true; }
     if (input.closeId) {
       const index = this.state.tabs.findIndex(t => t.id === input.closeId); if (index < 0) throw new Error('Task not found');
       this.destroy(input.closeId); this.state.tabs.splice(index, 1);
@@ -126,8 +162,9 @@ export class Workspace {
   }
   async refresh(id: string) {
     const old = this.state.tabs.find(t => t.id === id); if (!old) throw new Error('Task not found');
+    if (old.kind === 'web') { this.destroy(id); old.paused = false; old.revision = (old.revision ?? 0) + 1; old.status = '重新加载网页'; this.hide(); await this.persist(); return this.view(); }
     const next = old.origin ? await this.fromSource(old.origin) : await this.fromFile(old.path!);
-    this.destroy(id); Object.assign(old, next, { paused: false }); this.hide(); await this.persist(); return this.view();
+    this.destroy(id); Object.assign(old, next, { paused: false, revision: (old.revision ?? 0) + 1 }); this.hide(); await this.persist(); return this.view();
   }
   async systemOpen(id: string) {
     const tab = this.state.tabs.find(t => t.id === id); if (!tab?.path || tab.source === 'proposal') throw new Error('请先保存产物。');
@@ -143,10 +180,13 @@ export class Workspace {
   }
   hide() { this.layoutGeneration++; for (const view of this.views.values()) view.setVisible(false); }
   private destroy(id: string) {
+    this.proxies.get(id)?.close(); this.proxies.delete(id);
+    for (const [key, capture] of this.captures) if (capture.tabId === id) this.captures.delete(key);
     const view = this.views.get(id); if (!view) return;
     this.owner()?.contentView.removeChildView(view);
     if (!view.webContents.isDestroyed()) {
-      const isolated = view.webContents.session; isolated.protocol.unhandle('agent47-document');
+      const isolated = view.webContents.session;
+      if (this.state.tabs.find(t => t.id === id)?.kind === 'html') isolated.protocol.unhandle('agent47-document');
       view.webContents.close({ waitForBeforeUnload: false }); void isolated.closeAllConnections(); void isolated.clearStorageData(); void isolated.clearCache();
     }
     this.views.delete(id);
@@ -162,10 +202,38 @@ export class Workspace {
   private async layoutInner(input: { tabId?: string; bounds?: { x: number; y: number; width: number; height: number } }, generation: number) {
     if (generation !== this.layoutGeneration) return;
     const owner = this.owner(), tab = this.state.tabs.find(t => t.id === input.tabId), b = input.bounds;
-    if (!owner || !b || !tab || tab.paused || !this.state.visible || this.state.activeId !== tab.id || tab.kind !== 'html' || !b.width || !b.height) return;
+    if (!owner || !b || !tab || tab.paused || !this.state.visible || this.state.activeId !== tab.id || !['html', 'web'].includes(tab.kind) || !b.width || !b.height) return;
     const [w, h] = owner.getContentSize();
     if (b.x + b.width > w || b.y + b.height > h) throw new Error('Invalid workspace bounds');
     let view = this.views.get(tab.id);
+    if (!view && tab.kind === 'web') {
+      const isolated = session.fromPartition(`agent47-web-${randomUUID()}`), proxy = await publicProxy();
+      if (generation !== this.layoutGeneration || owner.isDestroyed() || tab.paused) { proxy.close(); return; }
+      await isolated.setProxy({ mode: 'fixed_servers', proxyRules: `http://127.0.0.1:${proxy.port}`, proxyBypassRules: '<-loopback>' });
+      if (generation !== this.layoutGeneration || owner.isDestroyed() || tab.paused) { proxy.close(); return; }
+      isolated.setPermissionRequestHandler((_wc, _p, cb) => cb(false)); isolated.setPermissionCheckHandler(() => false);
+      isolated.webRequest.onBeforeRequest((details, cb) => { try { if (details.url.length > 2048) throw new Error('URL limit'); webOrigin(details.url); cb({ cancel: false }); } catch { cb({ cancel: true }); } });
+      isolated.on('will-download', e => e.preventDefault());
+      view = new WebContentsView({ webPreferences: { session: isolated, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true } });
+      const wc = view.webContents;
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp'); wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+      wc.on('login', (event, _details, info, callback) => { event.preventDefault(); if (info.isProxy && info.host === '127.0.0.1' && info.port === proxy.port) callback(proxy.username, proxy.password); else callback(); });
+      wc.on('will-navigate', (event, target) => { try { if (target.length > 2048) throw new Error('URL limit'); webOrigin(target); } catch { event.preventDefault(); } });
+      wc.on('will-attach-webview', e => e.preventDefault());
+      const navigated = () => {
+        if (wc.isDestroyed()) return;
+        const target = wc.getURL(); try { webOrigin(target); } catch { return; }
+        tab.url = target.slice(0, 2048); tab.name = new URL(target).hostname.slice(0, 255); tab.sha256 = sha256(tab.url); tab.status = '临时网页会话 · 不自动入模';
+        void this.persist().then(this.changed).catch(() => {});
+      };
+      wc.on('did-navigate', navigated); wc.on('did-navigate-in-page', navigated);
+      wc.on('did-start-navigation', (_event, _url, _inPlace, isMain) => {
+        if (isMain) for (const [id, capture] of this.captures) if (capture.tabId === tab.id) this.captures.delete(id);
+      });
+      wc.on('did-fail-load', (_e, code, _description, _url, main) => { if (main && code !== -3) { tab.status = '网页加载失败，可刷新重试'; void this.persist().then(this.changed).catch(() => {}); } });
+      owner.contentView.addChildView(view); view.setVisible(false); this.views.set(tab.id, view); this.proxies.set(tab.id, proxy);
+      void wc.loadURL(tab.url!).catch(() => {});
+    }
     if (!view) {
       const isolated = session.fromPartition(`agent47-document-${tab.id}-${randomUUID()}`);
       await isolated.setProxy({ mode: 'fixed_servers', proxyRules: '127.0.0.1:9', proxyBypassRules: '<-loopback>' });

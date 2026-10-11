@@ -49,6 +49,7 @@ export function App() {
   const [fileMode, setFileMode] = useState<'snapshot' | 'ask'>('snapshot');
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const task = tasks.find(t => t.id === selected);
+  const selectedRef = useRef(selected); selectedRef.current = selected;
   const needsDecision = !!task && (['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
   useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
   useEffect(() => { if (!needsDecision) setEditingDecision(false); }, [needsDecision]);
@@ -209,7 +210,17 @@ export function App() {
         </div>}
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
-      <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open} />
+      <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+        canSendPage={!!task && !needsDecision && !task.unknownEffect} sendPage={tabId => void run(async () => {
+          if (!task || needsDecision) throw new Error('请先选择对话并完成当前决定。');
+          const snapshot = await bridge.workspaceCapture({ tabId, taskId: task.id });
+          if (selectedRef.current !== task.id) throw new Error('请重新读取：对话已切换。');
+          const clientMessageId = crypto.randomUUID();
+          setLocalDecision({ title: '将页面摘录发送给 DeepSeek', detail: `${snapshot.url}\n目标对话：${task.goal.slice(0, 80)}\n采集于 ${snapshot.capturedAt} · ${snapshot.truncated ? '已截断' : '正文摘录'} · ${snapshot.digest.slice(0, 8)}\n不直接读取 Cookie、表单值或脚本；可见正文仍可能含隐私，请审阅。不授予网页操作权限，运行中按原队列边界消费。`,
+            preview: snapshot.content, confirmLabel: '发送已审阅摘录', confirm: async () => {
+              const result = await bridge.workspaceSendCapture({ id: snapshot.id, digest: snapshot.digest, clientMessageId }); setSelected(result.id); setEditingDecision(false);
+            } });
+        })} />
       </div>
       <footer className="app-footer"><span><span className="local-dot" />{bridge.preview ? 'PREVIEW MODE' : 'LOCAL-FIRST'}</span><span>{bridge.preview ? '示例数据仅在当前页面内存中，不接收真实凭据。' : '项目权限由你授权；文件工具改动前自动快照。'}<span className="footer-version">Agent47 0.2</span></span></footer>
     </div>

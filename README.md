@@ -28,6 +28,8 @@ npm run test:capabilities:live # real streaming, skills, edits, Node/Shell and c
 npm run test:permissions:live # real zero-click file batch, nested directories, snapshot restore and scoped host trust
 npm run test:decisions:live # real multi-question decision dock, restart drafts and explicit conversation trust
 npm run test:workspace:native # real native viewers/isolation; no model calls
+npm run test:web-workspace:native # HTTPS response + model fixture; native consent/runtime
+npm run test:web-context:live # actual public page + real DeepSeek; approved proxy required
 ```
 
 The Electron smoke script uses a deterministic model fixture and a temporary user-data directory. On a headless Linux CI host use `xvfb-run -a npm run smoke:electron`; that harness passes `--no-sandbox` only for the host test. Production app configuration keeps renderer sandboxing enabled.
@@ -48,7 +50,9 @@ The compact workbench docks its conversation composer outside scrolling history.
 
 Pending questions and approvals replace the ordinary composer with a fixed-bottom decision panel. Answer one or several questions, navigate back, supply custom text, skip optional questions and submit all answers once. Chat drafts remain separate. Tool/artifact consent supports exact-payload review or explicit conversation scope; “开启可信对话” in task permissions enables host tools without repeated prompts after one clear OS-rights consent. It is not a sandbox or a grant to other conversations.
 
-The persistent right-side document workspace opens saved artifacts, exact-content proposals and user-selected local files. HTML uses an ephemeral sandboxed `WebContentsView` with inline scripts but no application preload, network resources, forms, popups or relative assets. Markdown uses the existing safe GFM renderer; code uses lazy, self-hosted, read-only Monaco. Viewing does not authorize a write or add content to DeepSeek context. Tabs pin content across restarts; explicit refresh replaces the version. Unsupported approved document/image types can open in the system viewer. Limits: 10 tabs, UTF-8 text up to 1 MB, other documents up to 20 MB; no URL browsing, resource bundles, code editing or LSP yet.
+The persistent right-side document workspace opens saved artifacts, exact-content proposals and user-selected local files. HTML uses an ephemeral sandboxed `WebContentsView` with inline scripts but no application preload, network resources, forms, popups or relative assets. Markdown uses the existing safe GFM renderer; code uses lazy, self-hosted, read-only Monaco. Viewing does not authorize a write or add content to DeepSeek context. Tabs pin content across restarts; explicit refresh replaces the version. Unsupported approved document/image types can open in the system viewer. Limits: 10 tabs, UTF-8 text up to 1 MB, other documents up to 20 MB; no relative resource bundles, code editing or LSP yet.
+
+Public HTTPS URL tabs now use separate ephemeral native browser sessions and authenticated DNS-pinned CONNECT gateways. Browsing alone does not call a model. “将页面内容交给 Agent” captures a bounded main-document excerpt, then the fixed-bottom dock shows the exact content and target conversation before sending. Stop/close/refresh/navigation invalidate stale tickets; web tabs restore paused. No agent browser-action tools or new extension system are exposed; existing local HTML remains offline.
 
 No full browser/desktop automation, scheduler, MCP, multi-agent coordination, OS tool sandbox, package marketplace or binary skill assets yet. No billing/price/monetary-budget feature is in scope. Do not mistake the preview fixture for external execution.
 
@@ -75,6 +79,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Compact workbench, queued input, skill lifecycle and public HTTPS reader](docs/redesign/compact-workbench.md)
 - [Unified decision dock and scoped trust](docs/redesign/unified-decision-dock.md)
 - [Local artifact split workspace (Chinese)](docs/redesign/artifact-workspace.md)
+- [Public web tabs and reviewed context (Chinese)](docs/redesign/web-context.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

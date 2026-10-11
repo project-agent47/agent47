@@ -254,3 +254,23 @@ test('workspace tabs render Markdown, isolated HTML and read-only Monaco, with n
   await page.getByLabel('收起工作区').click();
   await expect(page.getByLabel('任务目标')).toBeVisible();
 });
+test('public URL tab and reviewed page excerpt use the bottom dock without implicit model access', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByRole('button', { name: /^工作区/ }).click();
+  await page.getByLabel('公共 HTTPS 网页地址').fill('https://example.com/');
+  await page.getByRole('button', { name: '打开网页', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'example.com', exact: true })).toBeVisible();
+  await expect(page.getByText('网页示例，不访问该地址；桌面应用在独立原生会话中浏览。')).toBeVisible();
+  await page.getByRole('button', { name: '将页面内容交给 Agent', exact: true }).click();
+  await expect(page.getByLabel('授权确认')).toContainText('PREVIEW_PAGE_OK');
+  await page.screenshot({ path: '.qa/web-review-light.png', animations: 'disabled' });
+  await page.getByLabel('授权确认').getByRole('button', { name: '取消', exact: true }).click();
+  await page.getByRole('button', { name: '将页面内容交给 Agent', exact: true }).click();
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(page.getByRole('button', { name: '发送已审阅摘录', exact: true })).toBeVisible();
+  await page.screenshot({ path: '.qa/web-review-narrow.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '发送已审阅摘录', exact: true }).click();
+  await page.getByLabel('收起工作区').click();
+  await expect(page.locator('.message.user').last()).toContainText('user-reviewed-web-snapshot');
+  await expect(page.locator('.message.user').last()).toContainText('PREVIEW_PAGE_OK');
+});
