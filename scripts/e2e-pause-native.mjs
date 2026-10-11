@@ -40,6 +40,8 @@ try {
   await page.getByLabel('任务目标').fill(goal); await page.getByLabel('开始任务', { exact: true }).click();
   await expect.poll(async () => (await tasks())[0]?.status, { timeout: live ? 300000 : 30000 }).toBe(live ? 'paused' : 'completed');
   let t = (await tasks())[0];
+  await expect(page.getByLabel('执行轮次', { exact: true })).toHaveValue(t.id);
+  await expect.poll(() => page.evaluate(() => window.agent47.lastRun())).toBe(t.id);
   if (!live) { await seedPaused(t.id); await app.close(); app = undefined; await launch(); }
   await expect(page.getByLabel('暂停与续跑', { exact: true })).toBeVisible();
   t = (await tasks())[0];
