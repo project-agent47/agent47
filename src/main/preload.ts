@@ -3,6 +3,14 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  prepareMaterial: () => ipcRenderer.invoke('materials:prepare'),
+  discardMaterialTicket: ticket => ipcRenderer.invoke('materials:discard', ticket),
+  chooseMaterial: id => ipcRenderer.invoke('materials:choose', id),
+  attachMaterial: input => ipcRenderer.invoke('materials:attach', input),
+  removeMaterial: input => ipcRenderer.invoke('materials:remove', input),
+  refreshMaterial: input => ipcRenderer.invoke('materials:refresh', input),
+  openMaterial: input => ipcRenderer.invoke('materials:open', input),
+  checkMaterials: id => ipcRenderer.invoke('materials:check', id),
   workspaceAgentGrant: input => ipcRenderer.invoke('workspace:agent-grant', input),
   workspaceView: () => ipcRenderer.invoke('workspace:view'),
   workspaceOpen: input => ipcRenderer.invoke('workspace:open', input),

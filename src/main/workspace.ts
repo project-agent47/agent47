@@ -14,6 +14,7 @@ import { capturePageScript, pageMessage } from '../shared/web-capture';
 import { browserSnapshotScript, browserActionScript, browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput } from '../shared/browser-tools';
 import { effectDigest } from '../core/effects';
 import type { Approval } from '../shared/contracts';
+import { validateMaterialSnapshot, type MaterialSnapshot } from '../core/materials';
 import type { ToolCall } from '../core/store';
 
 const sourceSchema = z.discriminatedUnion('kind', [
@@ -205,6 +206,43 @@ export class Workspace {
     const loaded = await this.fromFile(path);
     if (loaded.sha256 !== a.sha256 || sha256(a.content) !== a.sha256) throw new Error('Artifact integrity failure');
     return { name: a.name, content: a.content, sha256: a.sha256, kind: classifyDocument(a.name), source: 'artifact', taskId: task.id, origin: source, path };
+  }
+  async materialSnapshot(tabId: string): Promise<MaterialSnapshot> {
+    const tab = this.state.tabs.find(t => t.id === tabId);
+    if (!tab || !['file', 'artifact'].includes(tab.source) || tab.kind === 'unsupported' || tab.content === undefined)
+      throw new Error('请使用已保存成果或已选择的 HTML、Markdown、代码文本；网页和提案不作为文件材料。');
+    const current = tab.origin ? await this.fromSource(tab.origin) : await this.fromFile(tab.path!);
+    if (current.sha256 !== tab.sha256) throw new Error('请先刷新材料：文件已有新版。');
+    return { id: randomUUID(), name: tab.name, sha256: tab.sha256, content: tab.content, bytes: Buffer.byteLength(tab.content),
+      capturedAt: new Date().toISOString(), source: tab.source as 'file' | 'artifact', path: tab.path,
+      sourceTaskId: tab.origin?.taskId, sourceArtifactId: tab.origin?.kind === 'artifact' ? tab.origin.artifactId : undefined };
+  }
+  async chooseMaterial(): Promise<MaterialSnapshot | undefined> {
+    const answer = await dialog.showOpenDialog(this.owner()!, { title: '选择单份文本材料；发送时交给 DeepSeek，不授权父目录', properties: ['openFile'] });
+    if (answer.canceled || !answer.filePaths[0]) return;
+    if ((await lstat(answer.filePaths[0])).isSymbolicLink()) throw new Error('请勿选择符号链接。');
+    const loaded = await this.fromFile(await realpath(answer.filePaths[0]));
+    if (loaded.content === undefined) throw new Error('请使用 HTML、Markdown 或代码文本；其他文档仅能在系统查看器打开。');
+    return { id: randomUUID(), name: loaded.name, content: loaded.content, sha256: loaded.sha256, path: loaded.path,
+      bytes: Buffer.byteLength(loaded.content), capturedAt: new Date().toISOString(), source: 'file' };
+  }
+  async checkMaterial(material: MaterialSnapshot) {
+    const current = material.source === 'artifact'
+      ? await this.fromSource({ kind: 'artifact', taskId: material.sourceTaskId!, artifactId: material.sourceArtifactId! })
+      : await this.fromFile(material.path!);
+    return current.sha256 === material.sha256;
+  }
+  async refreshMaterial(material: MaterialSnapshot): Promise<MaterialSnapshot> {
+    if (material.source !== 'file') { await this.checkMaterial(material); return material; }
+    const next = await this.fromFile(material.path!);
+    if (next.content === undefined) throw new Error('请使用支持的文本材料。');
+    return { ...material, id: randomUUID(), content: next.content, sha256: next.sha256, bytes: Buffer.byteLength(next.content), capturedAt: new Date().toISOString() };
+  }
+  async openMaterial(material: MaterialSnapshot) {
+    validateMaterialSnapshot(material);
+    return this.add({ name: material.name, content: material.content, sha256: material.sha256, source: material.source, path: material.path,
+      ...(material.source === 'artifact' ? { origin: { kind: 'artifact' as const, taskId: material.sourceTaskId!, artifactId: material.sourceArtifactId! }, taskId: material.sourceTaskId } : {}),
+      kind: classifyDocument(material.name), status: '已引用版本快照 · 刷新不会自动更新对话引用' });
   }
   async openSource(source: WorkspaceSource) { return this.add(await this.fromSource(source)); }
   async openWeb(value: string) {

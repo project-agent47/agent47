@@ -1,4 +1,31 @@
 import { test, expect } from '@playwright/test';
+test('material chips distinguish local viewing from explicit conversation references', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('.task-row').nth(1).click();
+  await page.getByRole('button', { name: '＋选择材料', exact: true }).click();
+  await expect(page.getByLabel('对话材料引用')).toContainText('示例材料.md');
+  await expect(page.getByLabel('对话材料引用')).toContainText('不授权父目录');
+  await page.getByRole('button', { name: '示例材料.md · aaaaaa', exact: true }).click();
+  await expect(page.getByLabel('产物工作区')).toContainText('预览不读取真实文件');
+  await page.getByLabel('移除引用：示例材料.md').click();
+  await expect(page.getByLabel('对话材料引用')).not.toContainText('示例材料.md');
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+test('stable conversation title and explicit latest-run navigation preserve historical composer boundaries', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  const title = await page.locator('.task-title h1').innerText();
+  await page.getByLabel('继续对话', { exact: true }).fill('第二轮的不同目标');
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(page.getByText('第 2 轮', { exact: true })).toBeVisible();
+  await expect(page.locator('.task-title h1')).toHaveText(title);
+  await page.getByLabel('执行轮次', { exact: true }).selectOption({ label: '第 1 轮 · 已完成' });
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '回到当前轮次', exact: true }).click();
+  await expect(page.getByLabel('继续对话', { exact: true })).toBeVisible();
+  await expect(page.getByText('第 2 轮', { exact: true })).toBeVisible();
+  await page.screenshot({ path: '.qa/materials-preview.png', animations: 'disabled' });
+});
 test('web Agent grants use the bottom dock and can be revoked without another message', async ({ page }) => {
   await page.goto('/');
   await page.getByText('解释任务审批与固定 workflow 有什么区别', { exact: true }).first().click();
@@ -106,7 +133,7 @@ test('multi-turn composer renders Markdown and skill management stays preview-sa
   await page.locator('.task-row').nth(1).click();
   await page.getByLabel('继续对话', { exact: true }).fill('把这些区别整理成 Markdown 表格');
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
-  await expect(page.locator('.task-title h1')).toHaveText('把这些区别整理成 Markdown 表格');
+  await expect(page.locator('.task-title h1')).toHaveText('解释任务审批与固定 workflow 有什么区别');
   await expect(page.getByText('第 2 轮', { exact: true })).toBeVisible();
   await expect(page.locator('.message.assistant table')).toBeVisible();
   await page.screenshot({ path: '.qa/conversation-light.png', animations: 'disabled' });

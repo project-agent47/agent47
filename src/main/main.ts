@@ -116,17 +116,67 @@ async function boot(): Promise<void> {
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   handle('tasks:list', () => runtime.list());
-  handle('tasks:create', value => {
-    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional() }).strict().parse(value);
+  const materialTickets = new Map<string, { material: import('../core/materials').MaterialSnapshot; at: number }>();
+  handle('materials:discard', value => { materialTickets.delete(idSchema.parse(value)); });
+  handle('materials:prepare', async () => {
+    const material = await workspace.chooseMaterial(); if (!material) return;
+    for (const [id, t] of materialTickets) if (Date.now() - t.at > 600000) materialTickets.delete(id);
+    if (materialTickets.size >= 20) throw new Error('请稍后重试：待发送材料过多。');
+    const ticket = randomUUID(); materialTickets.set(ticket, { material, at: Date.now() });
+    return { ticket, material: { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source } };
+  });
+  handle('materials:choose', async value => {
+    const taskId = idSchema.parse(value), material = await workspace.chooseMaterial();
+    return material ? runtime.attachMaterial(taskId, material) : runtime.list().find(t => t.id === taskId);
+  });
+  handle('tasks:create', async value => {
+    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional(), materialTickets: z.array(idSchema).max(10).optional() }).strict().parse(value);
     const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
     if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
     if (!providerView().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
-    return runtime.create(input.goal, input.skill, folder?.path, folder?.fileMode);
+    const materials = (input.materialTickets ?? []).map(id => {
+      const ticket = materialTickets.get(id);
+      if (!ticket || Date.now() - ticket.at > 600000) throw new Error('请重新选择材料：临时选择已过期。');
+      return ticket.material;
+    });
+    if (materials.reduce((n, m) => n + m.bytes, 0) > 5_000_000) throw new Error('请减少材料：合计最多 5 MB。');
+    for (const m of materials) if (!await workspace.checkMaterial(m)) throw new Error('请重新选择材料：文件已变化。');
+    const result = runtime.create(input.goal, input.skill, folder?.path, folder?.fileMode, materials);
+    for (const id of input.materialTickets ?? []) materialTickets.delete(id); return result;
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
-  handle('tasks:send', value => {
-    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['queue', 'steer', 'followup']), clientMessageId: idSchema, instruction: z.boolean().optional() }).strict().parse(value);
-    return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId, input.instruction);
+  const materialBinding = z.object({ taskId: idSchema, materialId: idSchema }).strict();
+  handle('materials:attach', async value => {
+    const input = z.object({ taskId: idSchema, tabId: idSchema }).strict().parse(value);
+    return runtime.attachMaterial(input.taskId, await workspace.materialSnapshot(input.tabId));
+  });
+  handle('materials:remove', value => { const input = materialBinding.parse(value); return runtime.removeMaterial(input.taskId, input.materialId); });
+  const boundMaterial = (input: z.infer<typeof materialBinding>) => {
+    const task = store.get(input.taskId), m = task.materialSnapshots?.[input.materialId];
+    if (!m || !task.materials?.some(v => v.id === input.materialId)) throw new Error('请重新选择材料。');
+    return m;
+  };
+  handle('materials:refresh', async value => {
+    const input = materialBinding.parse(value), next = await workspace.refreshMaterial(boundMaterial(input));
+    return runtime.attachMaterial(input.taskId, next, input.materialId);
+  });
+  handle('materials:open', value => {
+    const input = materialBinding.parse(value), m = store.get(input.taskId).materialSnapshots?.[input.materialId];
+    if (!m) throw new Error('请使用已留档的材料版本。'); return workspace.openMaterial(m);
+  });
+  handle('materials:check', async value => {
+    const task = store.get(idSchema.parse(value));
+    return Promise.all((task.materials ?? []).map(async m => {
+      try { return { id: m.id, state: await workspace.checkMaterial(task.materialSnapshots![m.id]) ? 'current' : 'changed' }; }
+      catch { return { id: m.id, state: 'unavailable' }; }
+    }));
+  });
+  handle('tasks:send', async value => {
+    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['queue', 'steer', 'followup']), clientMessageId: idSchema, instruction: z.boolean().optional(), materialIds: z.array(idSchema).max(10).optional() }).strict().parse(value);
+    if (!store.command(input.clientMessageId)) for (const id of input.materialIds ?? []) {
+      if (!await workspace.checkMaterial(boundMaterial({ taskId: input.taskId, materialId: id }))) throw new Error('请更新引用或移除材料：文件已有新版。');
+    }
+    return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId, input.instruction, input.materialIds);
   });
   const questionBinding = { taskId: idSchema, questionId: z.string().min(1).max(128), revision: z.number().int().positive(), digest: z.string().regex(/^[a-f0-9]{64}$/) };
   handle('questions:draft', value => runtime.saveQuestionDraft(z.object({

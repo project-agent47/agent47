@@ -157,7 +157,7 @@ export function MessageComposer({ task, busy, run, sent, editing, back, remember
     event.preventDefault(); if (!text.trim() || busy) return;
     void run(async () => {
       clearTimeout(timer.current); await persist();
-      const next = await bridge.sendMessage({ taskId: task.id, text: latest.current.trim(), mode: 'queue', clientMessageId: crypto.randomUUID(), instruction: true });
+      const next = await bridge.sendMessage({ taskId: task.id, text: latest.current.trim(), mode: 'queue', clientMessageId: crypto.randomUUID(), instruction: true, materialIds: (task.materials ?? []).map(m => m.id) });
       latest.current = ''; saved.current = ''; setText(''); remember(''); sent(next.id);
     });
   }}>

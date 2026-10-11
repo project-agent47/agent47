@@ -336,3 +336,14 @@ h1 { font-size: var(--text-lg); }
 .workspace-url { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 760px) { .workspace-blocked { visibility: hidden; } }
 .decision-panel pre.page-excerpt { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; }
+.material-bar { font-size: 11px; padding: 4px 0; color: var(--color-muted); }
+.material-chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 86px; overflow: auto; }
+.material-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 5px; border: 1px solid var(--color-border); border-radius: 4px; max-width: 100%; color: var(--color-text); background: var(--color-surface-2); }
+.material-chip button { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 2px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.material-chip small { color: var(--color-warning); white-space: nowrap; }
+.material-controls, .run-navigation, .history-notice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.run-navigation { font-size: 11px; padding: 4px 0; color: var(--color-muted); }
+.run-navigation select { font: inherit; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 3px; max-width: 180px; }
+.run-navigation details { min-width: 0; max-width: 100%; }
+.run-navigation p { overflow-wrap: anywhere; white-space: pre-wrap; max-height: 100px; overflow: auto; }
+.history-notice { padding: 8px 0; font-size: 12px; justify-content: space-between; }
