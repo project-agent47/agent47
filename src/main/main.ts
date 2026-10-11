@@ -18,6 +18,7 @@ import { FileSnapshots } from '../core/snapshots';
 import { readWeb, webOrigin } from './web';
 import { answerListSchema } from '../shared/questions';
 import { Workspace } from './workspace';
+import { pageMessage } from '../shared/web-capture';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -67,7 +68,7 @@ async function boot(): Promise<void> {
   const driver = sdkDriver(() => vault.settings(), transport.fetch,
     failure => console.warn('[model-diagnostic] ' + JSON.stringify(failure)));
   const store = new TaskStore(join(root, 'tasks.db'));
-  const workspace = new Workspace(join(root, 'workspace.json'), store, artifacts, () => window); await workspace.start();
+  const workspace = new Workspace(join(root, 'workspace.json'), store, artifacts, () => window, () => window?.webContents.send('tasks:changed')); await workspace.start();
   handle('workspace:view', () => workspace.view());
   handle('workspace:open', value => workspace.openSource(value as Parameters<Workspace['openSource']>[0]));
   handle('workspace:import', () => workspace.importFile());
@@ -75,6 +76,14 @@ async function boot(): Promise<void> {
   handle('workspace:refresh', value => workspace.refresh(idSchema.parse(value)));
   handle('workspace:system', value => workspace.systemOpen(idSchema.parse(value)));
   handle('workspace:layout', value => workspace.layout(value));
+  handle('workspace:web', value => workspace.openWeb(z.string().url().max(2048).parse(value)));
+  handle('workspace:capture', value => { const input = z.object({ tabId: idSchema, taskId: idSchema }).strict().parse(value); return workspace.capture(input.tabId, input.taskId); });
+  handle('workspace:send-capture', value => {
+    const input = z.object({ id: idSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), clientMessageId: idSchema }).strict().parse(value);
+    const snapshot = workspace.reviewedCapture(input.id, input.digest), task = runtime.list().find(t => t.id === snapshot.taskId);
+    if (!task || ['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || task.unknownEffect) throw new Error('请先完成当前决定，再发送页面。');
+    return runtime.send(snapshot.taskId, pageMessage({ url: snapshot.url, title: snapshot.title, content: snapshot.content, capturedAt: snapshot.capturedAt, digest: snapshot.digest, truncated: snapshot.truncated }), 'queue', input.clientMessageId);
+  });
   const skills = new SkillRegistry(join(root, 'skills')); await skills.start();
   let hostExecution = JSON.parse(await readFile(join(root, 'execution.json'), 'utf8').catch(() => 'false')) === true;
   let fileMode = z.enum(['snapshot', 'ask']).parse(JSON.parse(await readFile(join(root, 'file-mode.json'), 'utf8').catch(() => '"snapshot"')));

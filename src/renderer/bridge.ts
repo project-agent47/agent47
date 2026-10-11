@@ -1,6 +1,8 @@
 import type { AgentBridge, TaskView, ProviderView, CreateInput } from '../shared/contracts';
 import { answerSummary, parseQuestions, validateAnswers } from '../shared/questions';
 import { previewWorkspace } from './workspace-preview';
+import { pageMessage } from '../shared/web-capture';
+import type { PageCapture } from '../shared/contracts';
 
 const demoQuestions = parseQuestions({ questions: [
   { id: 'audience', header: '受众', prompt: '这份报告面向谁？', type: 'single', options: [{ id: 'team', label: '研发团队', description: '强调技术与实现' }, { id: 'management', label: '管理层', description: '强调目标与风险' }] },
@@ -37,6 +39,7 @@ const provider: ProviderView = { baseURL: 'https://opencode.ai/zen/go/v1', model
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let previewExecution = { hostExecution: false, fileMode: 'snapshot' as 'snapshot' | 'ask' };
 let previewRetention: 0 | 7 | 30 | 90 = 0;
+const pageCaptures = new Map<string, PageCapture>();
 const previewBridge: AgentBridge = {
   preview: true,
   workspaceView: previewWorkspace.view,
@@ -46,6 +49,17 @@ const previewBridge: AgentBridge = {
   workspaceRefresh: previewWorkspace.refresh,
   workspaceSystemOpen: async () => {},
   workspaceLayout: async () => {},
+  workspaceWebOpen: previewWorkspace.web,
+  workspaceCapture: async input => {
+    const tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
+    if (tab?.kind !== 'web') throw new Error('请选择网页。');
+    const snapshot = { ...input, id: crypto.randomUUID(), url: tab.url!, title: '示例网页', content: '这是公共网页正文的交互示例。PREVIEW_PAGE_OK。预览没有访问网页、读取 Cookie 或调用模型。', capturedAt: new Date().toISOString(), digest: '0'.repeat(64), truncated: false };
+    pageCaptures.set(snapshot.id, snapshot); return snapshot;
+  },
+  workspaceSendCapture: async input => {
+    const snapshot = pageCaptures.get(input.id); if (!snapshot || snapshot.digest !== input.digest) throw new Error('请重新审阅页面。');
+    return previewBridge.sendMessage({ taskId: snapshot.taskId, text: pageMessage(snapshot), mode: 'queue', clientMessageId: input.clientMessageId });
+  },
   listTasks: async () => clone(samples),
   createTask: async (input: CreateInput) => {
     const at = new Date().toISOString();
