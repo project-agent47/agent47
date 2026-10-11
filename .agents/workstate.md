@@ -1,7 +1,8 @@
 # Current workstate
 
-- Master eaa799a: owner-authorized self-review and merge of PR #10 complete; exact master workflow38148802252 succeeded.
-- Active C1 branch feat/selection-versioned-file-edit; owner approved selection references, edits and diff, with Harness-informed stable fileEdit. Submit an independent PR, do not merge this new increment automatically.
+- Master e747d36: owner-authorized self-review/merge of PR #11 complete after repeated build/lint183unit/native selection; exact master workflow38152636663 succeeded.
+- Active R1 branch feat/source-evidence-workspace; owner approved source evidence/clickable material closure. Submit an independent PR; do not merge this new increment automatically.
+- R1 actual successful read receipts only, bounded immutable SQLite body with checkpoint pointers; Markdown citation buttons bind current conversation IDs, right-side offline readonly observation. Explicit live URL opening is separate. Built-in readEvidence allows bounded historical re-read after compaction, never fresh observation or expanded permissions. See docs/source-evidence.md and native/material/browser evidence harnesses; final validation pending.
 - C1: project-authorized raw-version selections into the existing composer without implicit sending; external/library references do not grant writing. Structured original-hash multi-hunk fileEdit with exact offsets, no fuzzy guesses; legacy editFile retained. Readonly recorded before/after Monaco diff uses automatic snapshots. See docs/selection-versioned-file-edit.md and scripts/e2e-selection-native.mjs for contracts and evidence limits.
 - A1: stable first-turn conversation title, latest-run sidebar, run history and explicit latest dock; versioned material references from first prompt, native single-file picker and saved workspace text/artifacts.
 - Bodies/pointers in main-owned checkpoints only. Model metadata only for sent versions, bounded readMaterial with immutable hash/byte validation, queue-bound versions, explicit source checks/refresh; selection/viewing is not model context and grants no parent directory.

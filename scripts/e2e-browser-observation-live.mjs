@@ -6,6 +6,7 @@ if (process.env.AGENT47_AUTHENTICATED_PROXY !== '1' || !process.env.HTTPS_PROXY)
 const data = await realpath(await mkdtemp(join(tmpdir(), 'a47-browser-observation-live-')));
 await mkdir('.qa', { recursive: true });
 const env = { ...process.env }; delete env.AGENT47_SMOKE; delete env.OPENCODE_API_TOKEN;
+const evidenceMode = process.env.AGENT47_BROWSER_EVIDENCE_LIVE === '1';
 const head = 'HEAD_' + crypto.randomUUID(), tail = 'TAIL_' + crypto.randomUUID();
 const html = `<!doctype html><h1>Controlled delayed article</h1><button onclick="this.disabled=true;setTimeout(()=>{document.querySelector('main').innerHTML='<h2>Evidence article</h2><p>${head} '+ 'Synthetic article. '.repeat(360) +' ${tail}</p>'},2000)">Load evidence</button><p>Do not guess the article evidence before it loads.</p><main><h2>Evidence article</h2><p>Waiting for load</p></main><form><input type="password" value="PRIVATE_FIXTURE_VALUE"></form>`;
 let app, page;
@@ -31,10 +32,10 @@ try {
   await expect.poll(async () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.some(v => v.webContents?.getURL() === 'https://example.com/' && !v.webContents.isLoading()))).toBe(true);
   await page.getByLabel('当前网页 Agent 权限').selectOption('allow');
   await page.getByRole('button', { name: '确认可信交互范围', exact: true }).click();
-  const follow = await page.evaluate(taskId => window.agent47.sendMessage({
-    taskId, text: '请用原生 browser 工具完成已授权网页的验收：先 browserRead 获取引用，再点击 Load evidence 一次；使用 browserWait 等待 text “HEAD_” 出现，timeoutMs 5000。之后重新 browserRead 获取 Evidence article 的区域引用；用 regionRef 与 snapshotId 定向读取该区域，limit 4000，再用 nextOffset、expectedDigest=contentDigest 及最新 snapshotId 分页直到 hasMore=false。不要用其他工具、不要再次点击。最后原样报告区域中真实的 HEAD_ 和 TAIL_ 完整随机标记，并简述这是局部区域、非整个网页。不要猜测任何标记。',
+  const follow = await page.evaluate(({ taskId, evidenceMode }) => window.agent47.sendMessage({
+    taskId, text: '请用原生 browser 工具完成已授权网页的验收：先 browserRead 获取引用，再点击 Load evidence 一次；使用 browserWait 等待 text “HEAD_” 出现，timeoutMs 5000。之后重新 browserRead 获取 Evidence article 的区域引用；用 regionRef 与 snapshotId 定向读取该区域，limit 4000，再用 nextOffset、expectedDigest=contentDigest 及最新 snapshotId 分页直到 hasMore=false。不要用其他工具、不要再次点击。最后原样报告区域中真实的 HEAD_ 和 TAIL_ 完整随机标记，并简述这是局部区域、非整个网页。不要猜测任何标记。' + (evidenceMode ? '分别用实际含有 HEAD 和 TAIL 的工具结果 source.uri 做 Markdown 引用，不要引用未包含所述标记的范围。' : ''),
     mode: 'followup', clientMessageId: crypto.randomUUID()
-  }), first.id);
+  }), { taskId: first.id, evidenceMode });
   await expect.poll(async () => (await page.evaluate(() => window.agent47.listTasks())).find(t => t.id === follow.id)?.status, { timeout: 240000 }).toBe('completed');
   const task = (await page.evaluate(() => window.agent47.listTasks())).find(t => t.id === follow.id);
   const record = await app.evaluate(({ app }, taskId) => {
@@ -59,5 +60,27 @@ try {
     steps: task.steps, calls: calls.map(c => ({ toolName: c.toolName, input: c.input })), usage: task.usage,
     verifiedAt: new Date().toISOString(), evidence: { head, tail }
   }, null, 2));
+  if (evidenceMode) {
+    const answer = task.events.filter(e => e.kind === 'assistant').at(-1).text;
+    const ids = [...new Set([...answer.matchAll(/agent47-source:(s[a-f0-9]{16})/g)].map(m => m[1]))];
+    const archives = await app.evaluate(({ app }, ids) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite'), { join } = process.getBuiltinModule('node:path');
+      const db = new DatabaseSync(join(app.getPath('userData'), 'tasks.db'));
+      const rows = ids.map(id => db.prepare('SELECT body FROM source_evidence WHERE id=?').get(id)).map(r => r ? JSON.parse(r.body) : undefined);
+      db.close(); return rows;
+    }, ids);
+    if (ids.length < 2 || archives.some(s => !s) || !archives.some(s => s.content.includes(head)) || !archives.some(s => s.content.includes(tail))) throw new Error('Model citation did not bind actual head/tail excerpts');
+    const usage = JSON.stringify(task.usage);
+    await expect(page.getByLabel('执行轮次', { exact: true })).toHaveValue(task.id);
+    await page.locator('.source-citation').last().click();
+    await expect(page.getByLabel('来源证据版本与范围')).toContainText('https://example.com/');
+    await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 30000 });
+    if (JSON.stringify((await page.evaluate(() => window.agent47.listTasks())).find(t => t.id === task.id).usage) !== usage) throw new Error('Viewing source invoked model');
+    await page.screenshot({ path: '.qa/browser-evidence-live.png', animations: 'disabled' });
+    await writeFile('.qa/browser-evidence-live-results.json', JSON.stringify({ result: 'REAL_DEEPSEEK_BROWSER_EVIDENCE_OK',
+      modelFixture: false, httpsResponseFixture: true, intentInjection: false, ipcFixture: false, platform: process.platform, verifiedAt: new Date().toISOString(),
+      steps: task.steps, cited: archives.map(({ content, ...s }) => ({ ...s, includesHead: content.includes(head), includesTail: content.includes(tail) })), usage: task.usage,
+      cases: ['one click followed by bounded wait and regional pagination', 'model cites actual head and tail returned ranges', 'right-side historical web excerpt with URL/version/range', 'click makes no model call', 'private form values excluded'] }, null, 2));
+  }
   console.log('REAL_DEEPSEEK_BROWSER_OBSERVATION_OK steps=' + task.steps);
 } finally { if (app) await app.close(); clearTimeout(watchdog); }

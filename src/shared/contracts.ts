@@ -5,6 +5,11 @@ export type SkillId = 'general' | 'review' | 'deliver';
 export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string; materials?: MaterialView[] }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
 export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; sourceTaskId?: string; sourceArtifactId?: string; selection?: { start: number; end: number; targetPath?: string } }
+export interface EvidenceView {
+  id: string; kind: 'material' | 'project' | 'web'; name: string; url?: string;
+  observedAt: string; versionHash: string; contentHash: string; offset: number; end: number;
+  coverage: string; originRunId: string; tool: string; uri: string;
+}
 export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'directory' | 'shell' | 'code' | 'browser'; payload?: Record<string, unknown>; root?: string; before?: string; denialReason?: string }
 export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compaction'; state: 'pending' | 'reported' | 'partial' | 'unknown'; input?: number; output?: number; total?: number; cacheRead?: number; reasoning?: number; textDeltas?: number; reasoningDeltas?: number }
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
@@ -36,6 +41,7 @@ export interface TaskView {
   usage?: TokenUsage[]; draft?: { text: string; reasoning: string };
   question?: UserQuestion; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup'; materials?: MaterialView[] }[];
   composerDraft?: string;
+  sources?: EvidenceView[];
   skillPins?: Record<string, string>;
   webOrigins?: string[];
   context?: { compactions: number; estimatedTokens: number; keptFrom: number };
@@ -52,6 +58,7 @@ export interface ProviderView { baseURL: string; model: string; configured: bool
 export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[] }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  openEvidence(input: { taskId: string; sourceId: string }): Promise<WorkspaceState>;
   selectWorkspace(input: { taskId: string; tabId: string; expectedHash: string; start: number; end: number }): Promise<TaskView>;
   openFileDiff(input: { taskId: string; snapshotId: string }): Promise<WorkspaceState>;
   lastRun(): Promise<string | undefined>;
@@ -110,7 +117,7 @@ export interface AgentBridge {
   onChange(callback: () => void): () => void;
 }
 export type WorkspaceSource = { kind: 'artifact'; taskId: string; artifactId: string } | { kind: 'proposal'; taskId: string; approvalId: string; digest: string };
-export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported' | 'web' | 'diff'; content?: string; before?: string; beforeHash?: string; sha256: string; source: 'artifact' | 'proposal' | 'file' | 'web' | 'diff'; taskId?: string; status?: string; paused?: boolean; url?: string; revision?: number; agentGrants?: { conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow' }[] }
+export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported' | 'web' | 'diff'; content?: string; before?: string; beforeHash?: string; sha256: string; source: 'artifact' | 'proposal' | 'file' | 'web' | 'diff' | 'evidence'; evidence?: EvidenceView; taskId?: string; status?: string; paused?: boolean; url?: string; revision?: number; agentGrants?: { conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow' }[] }
 export interface PageCapture { id: string; tabId: string; taskId: string; url: string; title: string; content: string; capturedAt: string; digest: string; truncated: boolean }
 export interface WorkspaceState { tabs: WorkspaceTab[]; activeId?: string; width: number; visible: boolean }
 declare global { interface Window { agent47?: AgentBridge } }

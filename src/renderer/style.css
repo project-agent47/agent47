@@ -357,3 +357,8 @@ h1 { font-size: var(--text-lg); }
 .selection-toolbar { display: flex; gap: 8px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--color-border); font-size: 11px; flex-wrap: wrap; }
 .selection-toolbar > span { flex: 1; min-width: 150px; }
 .selection-toolbar small { display: block; color: var(--color-muted); margin-top: 3px; }
+.source-citation { display: inline; padding: 1px 4px; border: 1px solid var(--color-border); border-radius: 4px; background: transparent; color: var(--color-primary); font: inherit; cursor: pointer; }
+.source-list { margin: 8px 0; padding: 8px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 12px; }
+.source-row { display: flex; flex-wrap: wrap; gap: 4px 8px; width: 100%; padding: 6px; border: 0; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
+.source-row span, .source-list small { color: var(--color-muted); overflow-wrap: anywhere; }
+.evidence-meta span { display: block; overflow-wrap: anywhere; }

@@ -53,14 +53,19 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
       <button role="tab" aria-selected={tab?.id === t.id} title={t.name} onClick={() => mutate({ activeId: t.id })}>{t.name}</button>
       <button className="icon-button" aria-label={`关闭标签：${t.name}`} onClick={() => mutate({ closeId: t.id })}><X size={12} /></button></div>)}</div>
     {tab ? <>
-      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : tab.source === 'diff' ? '历史差异' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
+      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : tab.source === 'diff' ? '历史差异' : tab.source === 'evidence' ? '来源证据' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
         {['html', 'markdown'].includes(tab.kind) && <button className="text-button" onClick={() => setRaw(!raw)}>{raw ? '查看渲染' : '查看源码'}</button>}
         {['html', 'web'].includes(tab.kind) && <button className="text-button" disabled={tab.paused} onClick={() => mutate({ pauseId: tab.id })}>{tab.paused ? '已停止，刷新恢复' : tab.kind === 'web' ? '停止网页' : '停止 HTML 运行'}</button>}
         {tab.kind === 'web' && <button className="text-button" aria-label="将页面内容交给 Agent" disabled={!canSendPage || !!tab.paused || blocked} onClick={() => sendPage(tab.id)}>发送页面摘录</button>}
-        {tab.kind !== 'diff' && <button className="icon-button" aria-label="刷新当前文档" onClick={() => void run(async () => setState(await bridge.workspaceRefresh(tab.id)))}><RefreshCw size={14} /></button>}
+        {tab.kind !== 'diff' && tab.source !== 'evidence' && <button className="icon-button" aria-label="刷新当前文档" onClick={() => void run(async () => setState(await bridge.workspaceRefresh(tab.id)))}><RefreshCw size={14} /></button>}
         <button className="icon-button" aria-label="标签左移" onClick={() => mutate({ moveId: tab.id, direction: -1 })}><ArrowLeft size={14} /></button>
         <button className="icon-button" aria-label="标签右移" onClick={() => mutate({ moveId: tab.id, direction: 1 })}><ArrowRight size={14} /></button></div>
       {tab.kind === 'html' && !raw && <p className="workspace-note">离线隔离渲染；外网、相对资源、弹窗与表单提交不开放。{bridge.preview && '预览关闭脚本。'}</p>}
+      {tab.evidence && <div className="workspace-note evidence-meta" aria-label="来源证据版本与范围"><strong>{tab.evidence.name}</strong>
+        <span> {tab.evidence.offset}–{tab.evidence.end} 原文 UTF-16 · {tab.evidence.observedAt} · 版本 {tab.evidence.versionHash.slice(0, 12)}</span>
+        <span>{tab.evidence.coverage}</span><span>只读历史摘录，显示统一LF并隐藏BOM；范围与哈希仍对应原文。不是完整来源、当前页面或事实正确性保证。关闭标签移除查看副本。</span>
+        {tab.evidence.url && <><span className="workspace-url">{tab.evidence.url}</span><button className="text-button" onClick={() => void run(async () => setState(await bridge.workspaceWebOpen(tab.evidence!.url!)))}>打开当前网页（重新联网）</button></>}
+      </div>}
       {tab.kind === 'web' && <div className="workspace-note"><span className="workspace-url" title={tab.url}>{tab.url}</span>
         <label>Agent 权限 <select aria-label="当前网页 Agent 权限" disabled={!conversationId || !!tab.paused || blocked} value={tab.agentGrants?.find(g => g.conversationId === conversationId)?.mode ?? 'deny'} onChange={e => grantPage(tab.id, e.target.value as 'deny' | 'read' | 'ask' | 'allow')}>
           <option value="deny">未授权</option><option value="read">读取与同站导航</option><option value="ask">交互逐次确认</option><option value="allow">可信交互免确认</option>
@@ -85,7 +90,7 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
       {tab.kind === 'diff' && <p className="workspace-note">{tab.beforeHash?.slice(0, 8)} → {tab.sha256.slice(0, 8)} · {tab.status}。只读文本差异统一显示LF，隐藏文件头BOM；不自动入模。标签是独立查看快照，备份清理不删除它，关闭可移除。</p>}
       <footer className="workspace-footer">{tab.taskId && <button className="text-button" onClick={() => sourceTask(tab.taskId!)}>查看来源任务</button>}
         {['file', 'artifact'].includes(tab.source) && tab.kind !== 'unsupported' && <button className="text-button" disabled={!canSendPage || blocked} onClick={() => attachMaterial(tab.id)}>引用到当前对话</button>}
-        {!['web', 'diff'].includes(tab.kind) && <button className="secondary small-button" disabled={tab.source === 'proposal'} onClick={() => void run(async () => {
+        {!['web', 'diff'].includes(tab.kind) && tab.source !== 'evidence' && <button className="secondary small-button" disabled={tab.source === 'proposal'} onClick={() => void run(async () => {
           if (bridge.preview) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([tab.content ?? ''])); a.download = tab.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
           else await bridge.workspaceSystemOpen(tab.id);
         })}>{bridge.preview ? '下载示例文件' : '用系统默认查看器打开'}</button>}</footer>

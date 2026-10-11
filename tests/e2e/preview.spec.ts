@@ -1,4 +1,21 @@
 import { test, expect } from '@playwright/test';
+test('known citations open historical excerpts, invalid IDs stay inert, sources do not consume drafts', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('保留来源审阅草稿');
+  await expect(page.getByText('[无效来源引用]', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '查看示例证据', exact: false }).click();
+  await expect(page.getByLabel('来源证据版本与范围')).toContainText('100–165');
+  await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.view-lines')).toContainText('SOURCE_EVIDENCE_PREVIEW');
+  await expect(page.getByLabel('刷新当前文档')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue('保留来源审阅草稿');
+  await page.screenshot({ path: '.qa/evidence-preview-light.png', animations: 'disabled' });
+  await page.getByLabel('切换深色模式').click(); await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.getByLabel('来源证据版本与范围')).toBeVisible();
+  await page.screenshot({ path: '.qa/evidence-preview-dark-narrow.png', animations: 'disabled' });
+});
 test('rendered Markdown selection maps unique source text and attaches without sending', async ({ page }) => {
   await page.goto('/'); await page.locator('.task-row').nth(1).click();
   await page.getByRole('button', { name: '打开文件', exact: true }).click();

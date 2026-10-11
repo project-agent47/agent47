@@ -1,4 +1,4 @@
-import type { WorkspaceState, WorkspaceSource, TaskView } from '../shared/contracts';
+import type { WorkspaceState, WorkspaceSource, TaskView, EvidenceView } from '../shared/contracts';
 import { classifyDocument } from '../shared/documents';
 const state: WorkspaceState = { tabs: [], width: 440, visible: false };
 const clone = () => structuredClone(state);
@@ -9,6 +9,16 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
   state.visible = true; return clone();
 }
 export const previewWorkspace = {
+  evidence: async (source: EvidenceView) => {
+    const existing = state.tabs.find(t => t.evidence?.id === source.id);
+    if (existing) state.activeId = existing.id;
+    else {
+      const tab = { id: crypto.randomUUID(), name: `证据 · ${source.name}`, kind: 'code' as const, source: 'evidence' as const,
+        content: 'SOURCE_EVIDENCE_PREVIEW — 示例摘录，不读取真实材料或调用模型。', sha256: source.contentHash, evidence: source, status: '示例证据，不连接真实来源' };
+      state.tabs.push(tab); state.activeId = tab.id;
+    }
+    state.visible = true; return clone();
+  },
   diff: async (taskId: string) => {
     const tab = { id: crypto.randomUUID(), name: '差异 · example.ts', kind: 'diff' as const, source: 'diff' as const, taskId,
       content: 'export const message = "Updated";\n', before: 'export const message = "Original";\n', sha256: '1'.repeat(64), beforeHash: '2'.repeat(64), status: '示例差异，不执行真实文件工具' };

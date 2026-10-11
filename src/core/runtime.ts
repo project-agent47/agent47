@@ -14,6 +14,7 @@ import { relative, isAbsolute, sep, resolve } from 'node:path';
 import { browserReadNames, browserEffectNames } from '../shared/browser-tools';
 import type { Approval } from '../shared/contracts';
 import { materialMessage, readMaterial, validateMaterialSnapshot, type MaterialSnapshot } from './materials';
+import { captureEvidence, evidenceView, validateEvidence, evidenceReadInput, readArchivedEvidence } from './evidence';
 import { inputKey, recordObservation } from './progress';
 
 export interface RuntimeServices {
@@ -318,6 +319,11 @@ export class TaskRuntime {
     if (!task.fileChanges?.some(c => c.id === snapshotId && c.state !== 'cleaned') || !this.services.snapshots) throw new Error('请使用本轮可查看的文件改动。');
     return this.services.snapshots.diff(id, snapshotId);
   }
+  evidence(id: string, sourceId: string) {
+    const source = this.store.get(id).evidenceSnapshots?.[sourceId];
+    if (!source) throw new Error('没有本次对话实际读取的来源记录。');
+    validateEvidence(source); return source;
+  }
   async restoreFile(id: string, snapshotId: string): Promise<void> {
     const task = this.store.get(id);
     if (!task.root || [...this.restoringRoots].some(other => overlappingRoots(task.root!, other)) || !terminal.has(task.status) || task.effectStarted || this.active.has(id) ||
@@ -427,6 +433,7 @@ export class TaskRuntime {
       runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? []),
       conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60),
       materials: structuredClone(parent.materials ?? []), materialSnapshots: structuredClone(parent.materialSnapshots ?? {}),
+      evidenceSnapshots: structuredClone(parent.evidenceSnapshots ?? {}),
       authorizedMaterialIds: [...new Set([...(parent.authorizedMaterialIds ?? []), ...materials.map(m => m.id), ...(includeQueued ? (parent.queuedInput ?? []).flatMap(q => (q.materials ?? []).map(m => m.id)) : [])])],
       fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
@@ -492,6 +499,7 @@ export class TaskRuntime {
   }
   private toolResult(task: TaskRecord, call: ToolCall, value: unknown, error = false): void {
     this.initProgress(task); recordObservation(task, call, value, error);
+    if (!error) value = captureEvidence(task, call, value);
     const message: ModelMessage = { role: 'tool', content: [{
       type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
       output: error ? { type: 'error-text', value: String(value) } : { type: 'json', value: JSON.parse(JSON.stringify(value)) }
@@ -508,6 +516,7 @@ export class TaskRuntime {
       purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
       catalog: JSON.stringify(this.services.skills?.catalog() ?? []), webOrigins: task.webOrigins ?? [],
       browserTabs: this.services.browser?.tabs(task.id) ?? [],
+      sources: Object.values(task.evidenceSnapshots ?? {}).slice(-32).map(evidenceView),
       materials: (task.authorizedMaterialIds ?? []).map(id => {
         const m = task.materialSnapshots?.[id];
         return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt, selection: m.selection } : undefined;
@@ -724,6 +733,10 @@ export class TaskRuntime {
                 if (!this.services.skills) throw new Error('No skills installed');
                 if (!task.skillPins?.[input.id]) throw new Error('Load skill before reading references');
                 value = await this.services.skills.read(input.id, input.path, task.skillPins[input.id]);
+              } else if (call.toolName === 'readEvidence') {
+                const { id: sourceId } = evidenceReadInput.parse(call.input);
+                const source = this.evidence(id, sourceId);
+                value = readArchivedEvidence(source, call.input);
               } else if (call.toolName === 'readMaterial') value = readMaterial(task.materialSnapshots ?? {}, task.authorizedMaterialIds ?? [], call.input);
               else value = await readTool(task.root, call.toolName, call.input);
               if (controller.signal.aborted || this.stopped) return;
