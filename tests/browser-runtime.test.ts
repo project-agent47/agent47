@@ -54,4 +54,9 @@ it('unknown remote effect does not auto-replay on restart', async () => {
   await wait(() => runtime.list()[0].status === 'awaiting_reconciliation');
   expect(store.get(task.id).effectStarted).toBe('click-test'); runtime.start();
   await new Promise(r => setTimeout(r, 20)); expect(execute).toHaveBeenCalledTimes(1);
+  runtime.resolveUnknown(task.id);
+  await wait(() => runtime.list()[0].status === 'completed');
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(JSON.stringify(store.get(task.id).messages)).toContain('this does not verify success');
+  expect(JSON.stringify(store.get(task.id).messages)).not.toContain('Previous host execution');
 });
