@@ -1,9 +1,11 @@
 import { _electron as electron, expect } from '@playwright/test';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-const root = await mkdtemp(join(tmpdir(), 'a47-workspace-native-')), data = join(root, 'data');
+// Windows tmpdir can use a DOS 8.3 alias; preserve the app's symlink checks by
+// passing a canonical test directory, rather than weakening production guards.
+const root = await realpath(await mkdtemp(join(tmpdir(), 'a47-workspace-native-'))), data = join(root, 'data');
 await mkdir(data); await mkdir('.qa', { recursive: true });
 let requests = 0;
 const server = createServer((_req, res) => { requests++; res.end('NETWORK_SHOULD_BE_BLOCKED'); }); await new Promise(r => server.listen(0, '127.0.0.1', r));
