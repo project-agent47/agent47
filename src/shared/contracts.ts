@@ -45,6 +45,13 @@ export interface ProviderView { baseURL: string; model: string; configured: bool
 export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  workspaceView(): Promise<WorkspaceState>;
+  workspaceOpen(input: WorkspaceSource): Promise<WorkspaceState>;
+  workspaceImport(): Promise<WorkspaceState>;
+  workspaceUpdate(input: { activeId?: string; closeId?: string; pauseId?: string; moveId?: string; direction?: -1 | 1; width?: number; visible?: boolean }): Promise<WorkspaceState>;
+  workspaceRefresh(id: string): Promise<WorkspaceState>;
+  workspaceSystemOpen(id: string): Promise<void>;
+  workspaceLayout(input: { tabId?: string; bounds?: { x: number; y: number; width: number; height: number } }): Promise<void>;
   preview: boolean;
   listTasks(): Promise<TaskView[]>;
   createTask(input: CreateInput): Promise<TaskView>;
@@ -77,4 +84,7 @@ export interface AgentBridge {
   cleanSnapshots(): Promise<{ cleaned: number; errors: number }>;
   onChange(callback: () => void): () => void;
 }
+export type WorkspaceSource = { kind: 'artifact'; taskId: string; artifactId: string } | { kind: 'proposal'; taskId: string; approvalId: string; digest: string };
+export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported'; content?: string; sha256: string; source: 'artifact' | 'proposal' | 'file'; taskId?: string; status?: string; paused?: boolean }
+export interface WorkspaceState { tabs: WorkspaceTab[]; activeId?: string; width: number; visible: boolean }
 declare global { interface Window { agent47?: AgentBridge } }

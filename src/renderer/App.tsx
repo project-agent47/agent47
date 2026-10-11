@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, ArrowUpRight, ArrowLeft, Plus, Folder, FileText, Inbox, SlidersHorizontal, Layers, Search, Sun, Moon, Check, X, Square, ChevronRight, ShieldCheck, Activity, Cpu, LoaderCircle, Cable, LockKeyhole, PanelRightClose, Download, Circle, CheckCircle2 } from 'lucide-react';
+import { ArrowUp, ArrowUpRight, ArrowLeft, Plus, Folder, FileText, Inbox, SlidersHorizontal, Layers, Search, Sun, Moon, Check, X, Square, ChevronRight, ShieldCheck, Activity, Cpu, LoaderCircle, Cable, LockKeyhole, PanelRightClose, Circle, CheckCircle2 } from 'lucide-react';
 import { bridge } from './bridge';
-import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView, SkillImport, ExecutionSettings, SnapshotSettings } from '../shared/contracts';
+import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView, SkillImport, ExecutionSettings, SnapshotSettings, WorkspaceState } from '../shared/contracts';
 import { Markdown } from './Markdown';
 import { ConsentPanel, DecisionPanel, MessageComposer, type LocalDecision } from './DecisionPanel';
+import { WorkspacePane } from './WorkspacePane';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
 const statusLabels: Record<TaskView['status'], string> = {
@@ -37,7 +38,7 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [inspector, setInspector] = useState(false);
-  const [artifact, setArtifact] = useState<{ task: TaskView; artifact: Artifact }>();
+  const [workspace, setWorkspace] = useState<WorkspaceState>({ tabs: [], width: 440, visible: false });
   const [connection, setConnection] = useState<ProviderView>();
   const [editingDecision, setEditingDecision] = useState(false);
   const [localDecision, setLocalDecision] = useState<LocalDecision>();
@@ -47,7 +48,6 @@ export function App() {
   const [hostEnabled, setHostEnabled] = useState(false);
   const [fileMode, setFileMode] = useState<'snapshot' | 'ask'>('snapshot');
   const goalRef = useRef<HTMLTextAreaElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
   const task = tasks.find(t => t.id === selected);
   const needsDecision = !!task && (['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
   useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
@@ -55,33 +55,18 @@ export function App() {
   const pending = tasks.filter(t => t.status === 'awaiting_approval').length;
   const active = tasks.filter(t => ['running', 'queued'].includes(t.status)).length;
   const refresh = async () => {
-    try { setTasks(await bridge.listTasks()); setConnection(await bridge.provider()); setExtensions(await bridge.listSkills()); const execution = await bridge.executionSettings(); setHostEnabled(execution.hostExecution); setFileMode(execution.fileMode ?? 'snapshot'); }
+    try { setTasks(await bridge.listTasks()); setConnection(await bridge.provider()); setExtensions(await bridge.listSkills()); setWorkspace(await bridge.workspaceView()); const execution = await bridge.executionSettings(); setHostEnabled(execution.hostExecution); setFileMode(execution.fileMode ?? 'snapshot'); }
     catch { setError('未能加载本地任务。请检查应用存储，不要删除原有数据。'); }
   };
   useEffect(() => { void refresh(); return bridge.onChange(() => void refresh()); }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [page, selected]);
   useEffect(() => {
-    if (!artifact) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const node = dialogRef.current;
-    const focusable = () => [...(node?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]') ?? [])];
-    focusable()[0]?.focus();
-    const trap = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab') return;
-      const items = focusable(), first = items[0], last = items.at(-1);
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
-      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-    };
-    document.addEventListener('keydown', trap);
-    return () => { document.removeEventListener('keydown', trap); if (previous?.isConnected) previous.focus(); };
-  }, [artifact]);
-  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault(); setSelected(undefined); setPage('home'); queueMicrotask(() => goalRef.current?.focus());
       }
-      if (event.key === 'Escape') { setArtifact(undefined); setInspector(false); }
+      if (event.key === 'Escape') { setInspector(false); }
     };
     addEventListener('keydown', handler); return () => removeEventListener('keydown', handler);
   }, []);
@@ -100,11 +85,12 @@ export function App() {
   };
   const go = (next: Page) => { setPage(next); setSelected(undefined); setError(''); };
   const open = (id: string) => { setPage('home'); setSelected(id); setInspector(false); setError(''); };
+  const setArtifact = (value: { task: TaskView; artifact: Artifact }) => void run(async () => setWorkspace(await bridge.workspaceOpen({ kind: 'artifact', taskId: value.task.id, artifactId: value.artifact.id })));
   const latest = tasks.filter((t, index) => tasks.findIndex(other => (other.conversationId ?? other.id) === (t.conversationId ?? t.id)) === index);
   const visible = latest.filter(t => t.goal.toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
 
   return <div className={selected ? 'app task-open' : 'app'}>
-    <aside className="sidebar" inert={artifact ? true : undefined}>
+    <aside className="sidebar">
       <button className="brand" onClick={() => go('home')} aria-label="回到任务中心"><span className="brand-mark"><Logo small /></span><span>Agent47<span className="brand-caption">YOUR LOCAL AGENT</span></span><span className="version">02</span></button>
       <button className="new-task" onClick={() => { go('home'); queueMicrotask(() => goalRef.current?.focus()); }}><Plus size={17} />新任务<span className="keycap">⌘ N</span></button>
       <nav aria-label="主导航">
@@ -121,11 +107,15 @@ export function App() {
         <button className={page === 'settings' ? 'nav active' : 'nav'} onClick={() => go('settings')}><SlidersHorizontal size={17} />连接设置与工具<span className={connection?.configured ? 'connected-dot' : 'disconnected-dot'} /></button>
       </div>
     </aside>
-    <div className="shell" inert={artifact ? true : undefined}>
+    <div className="shell">
       <header className="topbar"><div className="breadcrumb"><span>工作空间</span><ChevronRight size={14} /><strong>{selected ? '任务详情' : { home: '任务中心', artifacts: '成果库', capabilities: '能力与边界', settings: '连接设置' }[page]}</strong></div>
-        <div className="topbar-right">{bridge.preview && <span className="preview-label">交互预览 · 不调用模型</span>}<span className="model-label"><Cpu size={14} />{connection?.model || '未连接模型'}</span><button className="icon-button" aria-label={theme === 'light' ? '切换深色模式' : '切换浅色模式'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</button></div>
+        <div className="topbar-right">{bridge.preview && <span className="preview-label">交互预览 · 不调用模型</span>}<span className="model-label"><Cpu size={14} />{connection?.model || '未连接模型'}</span>
+          <button className="text-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceImport()))}>打开文件</button>
+          <button className="text-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceUpdate({ visible: !workspace.visible })))}>工作区{workspace.tabs.length > 0 ? ` ${workspace.tabs.length}` : ''}</button>
+          <button className="icon-button" aria-label={theme === 'light' ? '切换深色模式' : '切换浅色模式'} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</button></div>
       </header>
       {error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={16} /></button></div>}
+      <div className="shell-body">
       <main className={selected ? 'content task-content' : 'content'}>
         {page === 'home' && !task && <div className="home page-enter">
           <div className="home-heading"><div><h1>Agentic Workbench</h1><p>DeepSeek · 本地任务、文件与 Skills</p></div></div>
@@ -219,9 +209,10 @@ export function App() {
         </div>}
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
+      <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open} />
+      </div>
       <footer className="app-footer"><span><span className="local-dot" />{bridge.preview ? 'PREVIEW MODE' : 'LOCAL-FIRST'}</span><span>{bridge.preview ? '示例数据仅在当前页面内存中，不接收真实凭据。' : '项目权限由你授权；文件工具改动前自动快照。'}<span className="footer-version">Agent47 0.2</span></span></footer>
     </div>
-    {artifact && <div className="modal-backdrop" role="presentation" onClick={() => setArtifact(undefined)}><section ref={dialogRef} className="artifact-modal" role="dialog" aria-modal="true" aria-label={artifact.artifact.name} onClick={e => e.stopPropagation()}><div className="modal-heading"><div><span className="eyebrow">成果预览</span><h2>{artifact.artifact.name}</h2></div><button className="icon-button" aria-label="关闭成果预览" onClick={() => setArtifact(undefined)}><X size={20} /></button></div><pre>{artifact.artifact.content}</pre><div className="modal-footer"><button className="text-button" onClick={() => { open(artifact.task.id); setArtifact(undefined); }}>查看来源任务<ArrowUpRight size={14} /></button><button className="primary" onClick={() => void run(() => bridge.openArtifact({ taskId: artifact.task.id, artifactId: artifact.artifact.id }))}><Download size={16} />{bridge.preview ? '下载示例文件' : '用默认应用打开'}</button></div></section></div>}
   </div>;
 }
 

@@ -1,5 +1,6 @@
 import type { AgentBridge, TaskView, ProviderView, CreateInput } from '../shared/contracts';
 import { answerSummary, parseQuestions, validateAnswers } from '../shared/questions';
+import { previewWorkspace } from './workspace-preview';
 
 const demoQuestions = parseQuestions({ questions: [
   { id: 'audience', header: '受众', prompt: '这份报告面向谁？', type: 'single', options: [{ id: 'team', label: '研发团队', description: '强调技术与实现' }, { id: 'management', label: '管理层', description: '强调目标与风险' }] },
@@ -38,6 +39,13 @@ let previewExecution = { hostExecution: false, fileMode: 'snapshot' as 'snapshot
 let previewRetention: 0 | 7 | 30 | 90 = 0;
 const previewBridge: AgentBridge = {
   preview: true,
+  workspaceView: previewWorkspace.view,
+  workspaceOpen: input => previewWorkspace.open(input, samples),
+  workspaceImport: previewWorkspace.import,
+  workspaceUpdate: previewWorkspace.update,
+  workspaceRefresh: previewWorkspace.refresh,
+  workspaceSystemOpen: async () => {},
+  workspaceLayout: async () => {},
   listTasks: async () => clone(samples),
   createTask: async (input: CreateInput) => {
     const at = new Date().toISOString();

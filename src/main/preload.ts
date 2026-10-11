@@ -3,6 +3,13 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  workspaceView: () => ipcRenderer.invoke('workspace:view'),
+  workspaceOpen: input => ipcRenderer.invoke('workspace:open', input),
+  workspaceImport: () => ipcRenderer.invoke('workspace:import'),
+  workspaceUpdate: input => ipcRenderer.invoke('workspace:update', input),
+  workspaceRefresh: id => ipcRenderer.invoke('workspace:refresh', id),
+  workspaceSystemOpen: id => ipcRenderer.invoke('workspace:system', id),
+  workspaceLayout: input => ipcRenderer.invoke('workspace:layout', input),
   listTasks: () => ipcRenderer.invoke('tasks:list'),
   createTask: input => ipcRenderer.invoke('tasks:create', input),
   cancelTask: id => ipcRenderer.invoke('tasks:cancel', id),
