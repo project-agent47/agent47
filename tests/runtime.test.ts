@@ -25,7 +25,7 @@ function call(name: string, input: unknown, id = 'call-1'): ModelStep {
   };
 }
 async function until(condition: () => boolean) {
-  const end = Date.now() + 5000;
+  const end = Date.now() + (process.platform === 'win32' ? 45000 : 5000);
   while (!condition()) { if (Date.now() > end) throw new Error('Timeout'); await new Promise(resolve => setTimeout(resolve, 5)); }
 }
 describe('goal-driven durable runtime', () => {

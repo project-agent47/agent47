@@ -11,6 +11,8 @@ Reviewed the complete conversation/tools/skills diff and the corrective permissi
 
 Regression evidence includes two deliberately failing restore tests before their fixes, plus overlapping-root, awaited-revocation and large-UTF8 replay tests. Existing scopes, hash preconditions, approval integrity, native settings controls, streaming, skills and full tool-pair context behavior remain covered.
 
+Native Windows review CI exposed the old five-second unit harness deadline in the twelve-step persisted-loop test on a heavily slowed runner. The test still asserts exactly twelve steps; the Windows harness now allows 45 seconds of polling and 60 seconds per test. No application model/host timeout, step cap or correctness assertion was relaxed. This is test-host accommodation, not a claim that synchronous database checkpoint performance has been optimized.
+
 ## Explicit limitations, not hidden merge claims
 
 Host execution is not an OS sandbox. Same-user filesystem race isolation is best effort, and file snapshots do not include Shell/network/remote changes. File snapshots are local plaintext protected by app/user permissions. Target-native CI runs fixtures, not paid model calls, signed installers or OS keychain certification.
