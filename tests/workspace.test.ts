@@ -7,6 +7,7 @@ import { TaskStore } from '../src/core/store';
 const { picker, opener } = vi.hoisted(() => ({ picker: vi.fn(), opener: vi.fn().mockResolvedValue('') }));
 vi.mock('electron', () => ({ BrowserWindow: class {}, WebContentsView: class {}, session: {}, dialog: { showOpenDialog: picker }, shell: { openPath: opener } }));
 import { Workspace } from '../src/main/workspace';
+import { artifactPath, sha256 } from '../src/core/tools';
 import { browserSnapshotScript } from '../src/shared/browser-tools';
 let root: string, store: TaskStore, workspace: Workspace;
 async function browserSetup() {
@@ -165,6 +166,13 @@ it('selection refuses stale hashes/ranges and cannot migrate automatically to ch
   await expect(workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 50)).rejects.toThrow('选区');
   const selected = await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5);
   await expect(workspace.refreshMaterial(selected)).rejects.toThrow('重新选择');
+});
+it('library selections stay reference-only even if user project overlaps the artifact store', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString(), artifact = { id: 'saved-note', name: 'note.md', content: 'saved text', sha256: sha256('saved text') };
+  store.save({ id: taskId, goal: 'Library', root, skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [artifact], messages: [], pending: [] });
+  await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), artifact.content);
+  const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
+  expect((await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5)).selection).toEqual({ start: 0, end: 5 });
 });
 it('diff tabs persist both validated versions without paths, edit rights or system opening', async () => {
   const taskId = randomUUID(), opened = await workspace.openDiff(taskId, { path: 'a.ts', before: 'old', after: 'new' });

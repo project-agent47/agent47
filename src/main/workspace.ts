@@ -292,7 +292,7 @@ export class Workspace {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start || end > material.content.length || end - start > 12000) throw new Error('请使用最多12000字符的有效选区。');
     let targetPath: string | undefined;
     const task = this.store.get(taskId);
-    if (task.root && material.path) {
+    if (task.root && material.path && material.source === 'file') {
       const candidate = relative(task.root, material.path).replaceAll('\\', '/');
       if (candidate && candidate !== '..' && !candidate.startsWith('../') && !isAbsolute(candidate)) {
         if (await safeProjectPath(task.root, candidate) !== material.path) throw new Error('请重新选择：项目文件身份变化。');
