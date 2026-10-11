@@ -7,7 +7,9 @@ export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compact
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
 export interface SkillImport { ticket: string; skill: SkillView; instructions: string }
 export interface ExecutionSettings { hostExecution: boolean; fileMode?: 'snapshot' | 'ask' }
-export interface FileChange { id: string; path: string; state: 'saved' | 'restored' }
+export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored' }
+export interface RunUndo { state: 'running' | 'completed' | 'partial'; restored: number; conflicts: { path: string; error: string }[]; startedAt: string }
+export interface SnapshotSettings { retentionDays: 0 | 7 | 30 | 90; count: number; bytes: number; storagePath: string }
 export interface TaskView {
   id: string; goal: string; skill: SkillId; root?: string; status: TaskStatus;
   createdAt: string; updatedAt: string; events: TaskEvent[]; artifacts: Artifact[];
@@ -19,6 +21,7 @@ export interface TaskView {
   unknownEffect?: boolean;
   fileMode?: 'snapshot' | 'ask'; hostMode?: 'ask' | 'allow';
   fileChanges?: FileChange[];
+  undo?: RunUndo;
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
@@ -45,6 +48,10 @@ export interface AgentBridge {
   setExecutionSettings(input: Partial<ExecutionSettings>): Promise<void>;
   setTaskPermissions(input: { taskId: string; fileMode: 'snapshot' | 'ask'; hostMode: 'ask' | 'allow' }): Promise<void>;
   restoreFile(input: { taskId: string; snapshotId: string }): Promise<void>;
+  undoRun(taskId: string): Promise<RunUndo>;
+  snapshotSettings(): Promise<SnapshotSettings>;
+  setSnapshotRetention(days: 0 | 7 | 30 | 90): Promise<void>;
+  cleanSnapshots(): Promise<{ cleaned: number; errors: number }>;
   onChange(callback: () => void): () => void;
 }
 declare global { interface Window { agent47?: AgentBridge } }

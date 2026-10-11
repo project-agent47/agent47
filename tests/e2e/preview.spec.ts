@@ -121,3 +121,17 @@ test('tool settings are visible, usable in preview and explain disabled capabili
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: '.qa/tool-settings-mobile.png', fullPage: true, animations: 'disabled' });
 });
+test('snapshot retention defaults to keep-all and explicit cleanup is preview-safe', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '连接设置与工具', exact: true }).click();
+  await expect(page.getByLabel('快照保留策略')).toHaveValue('0');
+  await expect(page.getByRole('button', { name: '清理过期快照', exact: true })).toBeDisabled();
+  page.on('dialog', dialog => dialog.accept());
+  await page.getByLabel('快照保留策略').selectOption('7');
+  await expect(page.getByText('保留策略已保存。')).toBeVisible();
+  await page.getByRole('button', { name: '清理过期快照', exact: true }).click();
+  await expect(page.getByText('已清理 0 项；0 项未清理。')).toBeVisible();
+  await page.screenshot({ path: '.qa/snapshot-retention-light.png', fullPage: true, animations: 'disabled' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

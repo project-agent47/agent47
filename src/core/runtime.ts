@@ -3,13 +3,13 @@ import type { ModelMessage } from 'ai';
 import { TaskStore, publicTask, type TaskRecord, type ToolCall } from './store';
 import { readTool, approvalFor, applyArtifact } from './tools';
 import type { ModelDriver } from './model';
-import type { SkillId, TaskView } from '../shared/contracts';
+import type { SkillId, TaskView, RunUndo } from '../shared/contracts';
 import { z } from 'zod';
 import { effectNames, prepareEffect, applyProjectWrite, effectDigest, type HostExecutor } from './effects';
 import { projectedMessages, compactionCut, estimateTokens } from './context';
 import type { ModelContext, ModelStep } from './model';
 import type { FileSnapshots } from './snapshots';
-import { relative, isAbsolute, sep } from 'node:path';
+import { relative, isAbsolute, sep, resolve } from 'node:path';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
@@ -35,6 +35,9 @@ export class TaskRuntime {
   constructor(readonly store: TaskStore, private model: ModelDriver, private artifactRoot: string, private changed: () => void = () => {}, private services: RuntimeServices = {}) {}
   start(): void {
     for (const task of this.store.list()) {
+      if (task.undo?.state === 'running') {
+        task.undo.state = 'partial'; this.event(task, 'system', '整轮撤销被重启中断；已恢复项保留，请检查后重试，不自动继续。'); this.save(task);
+      }
       let changedUsage = false;
       for (const usage of task.usage ?? []) if (usage.state === 'pending') { usage.state = 'unknown'; changedUsage = true; }
       if (changedUsage) this.save(task);
@@ -118,6 +121,77 @@ export class TaskRuntime {
     this.toolResult(task, task.pending[0], 'Previous host execution outcome is unknown. User inspected it. Never replay it automatically.', true);
     task.effectStarted = undefined; if (task.status !== 'cancelled') task.status = 'queued';
     this.event(task, 'system', '已人工检查未知效果，原命令不会重放。'); this.save(task); this.kick();
+  }
+  private lockProject(task: TaskRecord): string {
+    if (!task.root || [...this.restoringRoots].some(root => overlappingRoots(root, task.root!)) ||
+      this.store.list().some(other => other.root && overlappingRoots(other.root, task.root!) &&
+        (!terminal.has(other.status) || other.effectStarted || this.active.has(other.id)))) throw new Error('请先停止或完成此项目的所有任务，再执行恢复或清理。');
+    this.restoringRoots.add(task.root); return task.root;
+  }
+  async undoRun(id: string): Promise<RunUndo> {
+    if (!this.services.snapshots) throw new Error('Snapshot service unavailable');
+    const initial = this.store.get(id), root = this.lockProject(initial);
+    const undo: RunUndo = { state: 'running', restored: 0, conflicts: [], startedAt: new Date().toISOString() };
+    initial.undo = undo; this.save(initial);
+    const blocked = new Set<string>();
+    try {
+      for (const change of [...(initial.fileChanges ?? [])].reverse()) {
+        const canonical = resolve(root, change.path);
+        const target = ['win32', 'darwin'].includes(process.platform) ? canonical.toLowerCase() : canonical;
+        if (change.state === 'cleaned' && change.cleanedFrom !== 'restored') {
+          blocked.add(target); undo.conflicts.push({ path: change.path, error: 'Snapshot backup was cleaned; cannot undo this change.' }); continue;
+        }
+        if (change.state !== 'saved') continue;
+        if (blocked.has(target)) continue;
+        try {
+          await this.services.snapshots.restore(id, change.id);
+          const current = this.store.get(id);
+          current.fileChanges!.find(item => item.id === change.id)!.state = 'restored';
+          undo.restored++; current.undo = structuredClone(undo); this.save(current);
+        } catch (error) {
+          blocked.add(target); undo.conflicts.push({ path: change.path, error: (error as Error).message });
+        }
+      }
+      undo.state = undo.conflicts.length ? 'partial' : 'completed';
+      const current = this.store.get(id); current.undo = undo;
+      this.event(current, 'system', `本轮文件撤销：恢复 ${undo.restored} 项，冲突 ${undo.conflicts.length} 项；不是原子事务。`); this.save(current);
+      const latest = this.store.list().find(other => (other.conversationId ?? other.id) === (initial.conversationId ?? initial.id))!;
+      latest.messages.push({ role: 'user', content: `[Application notice: the user undid file changes from run ${initial.runNumber ?? 1}. Restored ${undo.restored}; conflicts: ${JSON.stringify(undo.conflicts)}. Read current files again; never replay old actions. Conversation history and host/remote effects were not reverted.]` }); this.save(latest);
+      return undo;
+    } finally { this.restoringRoots.delete(root); }
+  }
+  async snapshotStats(): Promise<{ count: number; bytes: number }> {
+    let count = 0, bytes = 0;
+    for (const task of this.store.list()) for (const change of task.fileChanges ?? []) {
+      if (change.state === 'cleaned') continue;
+      try {
+        const info = await this.services.snapshots?.info(task.id, change.id);
+        if (info && info.state !== 'cleaned') { count++; bytes += info.bytes; }
+      } catch { /* Missing/invalid backup is not counted as usable or silently deleted. */ }
+    }
+    return { count, bytes };
+  }
+  async cleanSnapshots(days: number, now = Date.now()): Promise<{ cleaned: number; errors: number }> {
+    if (![0, 7, 30, 90].includes(days)) throw new Error('Invalid retention');
+    const result = { cleaned: 0, errors: 0 };
+    if (!days || !this.services.snapshots) return result;
+    for (const task of this.store.list()) {
+      if (!task.root || !terminal.has(task.status) || Date.parse(task.updatedAt) > now - days * 86400_000) continue;
+      let root: string;
+      try { root = this.lockProject(task); } catch { continue; }
+      try {
+        for (const change of task.fileChanges ?? []) {
+          if (change.state === 'cleaned') continue;
+          try {
+            await this.services.snapshots.purge(task.id, change.id);
+            const current = this.store.get(task.id);
+            const target = current.fileChanges!.find(item => item.id === change.id)!;
+            target.cleanedFrom = target.state as 'saved' | 'restored'; target.state = 'cleaned'; this.save(current); result.cleaned++;
+          } catch { result.errors++; }
+        }
+      } finally { this.restoringRoots.delete(root); }
+    }
+    return result;
   }
   private fork(parent: TaskRecord, text: string): TaskRecord {
     const now = new Date().toISOString();

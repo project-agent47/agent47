@@ -65,6 +65,8 @@ async function boot(): Promise<void> {
   let hostExecution = JSON.parse(await readFile(join(root, 'execution.json'), 'utf8').catch(() => 'false')) === true;
   let fileMode = z.enum(['snapshot', 'ask']).parse(JSON.parse(await readFile(join(root, 'file-mode.json'), 'utf8').catch(() => '"snapshot"')));
   const snapshots = new FileSnapshots(join(root, 'snapshots'));
+  let retentionDays = z.union([z.literal(0), z.literal(7), z.literal(30), z.literal(90)])
+    .parse(JSON.parse(await readFile(join(root, 'snapshot-retention.json'), 'utf8').catch(() => '0')));
   let changeTimer: ReturnType<typeof setTimeout> | undefined;
   const changed = () => {
     if (!changeTimer) {
@@ -116,6 +118,13 @@ async function boot(): Promise<void> {
     const input = z.object({ taskId: idSchema, snapshotId: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(value);
     return runtime.restoreFile(input.taskId, input.snapshotId);
   });
+  handle('tasks:undo', value => runtime.undoRun(idSchema.parse(value)));
+  handle('snapshots:view', async () => ({ retentionDays, storagePath: join(root, 'snapshots'), ...await runtime.snapshotStats() }));
+  handle('snapshots:retention', async value => {
+    const days = z.union([z.literal(0), z.literal(7), z.literal(30), z.literal(90)]).parse(value);
+    await writeFile(join(root, 'snapshot-retention.json'), JSON.stringify(days), { mode: 0o600 }); retentionDays = days;
+  });
+  handle('snapshots:clean', () => runtime.cleanSnapshots(retentionDays));
   handle('execution:view', () => ({ hostExecution, fileMode }));
   let executionWrite = Promise.resolve();
   handle('execution:set', value => {
@@ -183,6 +192,10 @@ async function boot(): Promise<void> {
   window.on('closed', () => { window = undefined; });
   app.on('second-instance', () => { window?.show(); window?.focus(); });
   await window.loadURL(url); window.show(); runtime.start();
+  // Never invent an expiry default: cleanup runs only under an explicitly saved policy.
+  void runtime.cleanSnapshots(retentionDays).catch(() => console.warn('[snapshot-cleanup] failed'));
+  const cleanupTimer = setInterval(() => { void runtime.cleanSnapshots(retentionDays).catch(() => console.warn('[snapshot-cleanup] failed')); }, 86400_000);
+  cleanupTimer.unref();
   app.on('will-quit', () => { void transport.close(); });
 }
 if (single) void boot().catch(() => {

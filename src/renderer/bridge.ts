@@ -28,6 +28,7 @@ const emit = () => listeners.forEach(listener => listener());
 const provider: ProviderView = { baseURL: 'https://opencode.ai/zen/go/v1', model: 'deepseek-v4.1-flash', configured: false, secureStorage: false };
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 let previewExecution = { hostExecution: false, fileMode: 'snapshot' as 'snapshot' | 'ask' };
+let previewRetention: 0 | 7 | 30 | 90 = 0;
 const previewBridge: AgentBridge = {
   preview: true,
   listTasks: async () => clone(samples),
@@ -74,6 +75,10 @@ const previewBridge: AgentBridge = {
     task.fileMode = input.fileMode; task.hostMode = input.hostMode; emit();
   },
   restoreFile: async () => { throw new Error('预览没有真实文件快照；请在桌面应用中恢复。'); },
+  undoRun: async () => { throw new Error('预览没有真实文件改动；请在桌面应用中撤销。'); },
+  snapshotSettings: async () => ({ retentionDays: previewRetention, count: 0, bytes: 0, storagePath: '预览示例：应用数据目录/snapshots（不读写本机）' }),
+  setSnapshotRetention: async days => { previewRetention = days; },
+  cleanSnapshots: async () => ({ cleaned: 0, errors: 0 }),
   decide: async input => {
     const task = samples.find(t => t.id === input.taskId)!;
     if (!task.approval || task.approval.state !== 'pending') throw new Error('此审批已结束。');

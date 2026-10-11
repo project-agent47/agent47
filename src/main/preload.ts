@@ -22,6 +22,10 @@ const bridge: AgentBridge = {
   setExecutionSettings: input => ipcRenderer.invoke('execution:set', input),
   setTaskPermissions: input => ipcRenderer.invoke('tasks:permissions', input),
   restoreFile: input => ipcRenderer.invoke('tasks:restore', input),
+  undoRun: id => ipcRenderer.invoke('tasks:undo', id),
+  snapshotSettings: () => ipcRenderer.invoke('snapshots:view'),
+  setSnapshotRetention: days => ipcRenderer.invoke('snapshots:retention', days),
+  cleanSnapshots: () => ipcRenderer.invoke('snapshots:clean'),
   onChange: callback => {
     const listener = () => callback();
     ipcRenderer.on('tasks:changed', listener);

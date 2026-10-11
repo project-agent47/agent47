@@ -50,15 +50,42 @@ try {
   await page.screenshot({ path: '.qa/permissions-desktop.png', fullPage: true, animations: 'disabled' });
   // Restore via the actual UI after a real Electron restart.
   const row = path => page.locator('.snapshot-row').filter({ has: page.locator('span', { hasText: path }) });
-  await row('governance/empty').getByRole('button', { name: '恢复改动前', exact: true }).click();
-  await row('governance/README.md').getByRole('button', { name: '恢复改动前', exact: true }).click();
-  await row('README.md').filter({ hasNotText: 'governance/' }).getByRole('button', { name: '恢复改动前', exact: true }).click();
+  if (process.env.AGENT47_BATCH_UNDO === '1') {
+    await page.getByRole('button', { name: '撤销第 1 轮文件改动', exact: true }).click();
+    await expect.poll(async () => (await tasks()).find(t => t.id === task.id).undo?.state).toBe('completed');
+    report.cases.push({ name: 'single UI confirmation reverses the whole real-model run after restart', restored: 3, passed: true, atomic: false });
+  } else {
+    await row('governance/empty').getByRole('button', { name: '恢复改动前', exact: true }).click();
+    await row('governance/README.md').getByRole('button', { name: '恢复改动前', exact: true }).click();
+    await row('README.md').filter({ hasNotText: 'governance/' }).getByRole('button', { name: '恢复改动前', exact: true }).click();
+  }
   await expect.poll(() => readFile(join(project, 'README.md'), 'utf8')).toBe('ORIGINAL_README_47');
   try { await lstat(join(project, 'governance')); throw new Error('Created parent was not removed'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   report.cases.push({ name: 'real desktop restart, persisted snapshots, UI restoration of existing file and newly created directory tree', passed: true });
 
   await page.getByRole('button', { name: '连接设置与工具', exact: true }).click();
   await expect(page.getByRole('heading', { name: '工具设置', exact: true })).toBeVisible();
+  if (process.env.AGENT47_BATCH_UNDO === '1') {
+    await expect(page.getByLabel('快照保留策略')).toHaveValue('0');
+    await expect(page.getByRole('button', { name: '清理过期快照', exact: true })).toBeDisabled();
+    await page.getByLabel('快照保留策略').selectOption('7');
+    await expect(page.getByText('保留策略已保存。')).toBeVisible();
+    await page.getByRole('button', { name: '清理过期快照', exact: true }).click();
+    await expect(page.getByText('已清理 0 项；0 项未清理。')).toBeVisible();
+    // Age disposable fixture timestamps only; real SQLite/IPC/cleanup stay in use.
+    await app.evaluate(({ app }, id) => {
+      const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+      const { join } = process.getBuiltinModule('node:path');
+      const db = new DatabaseSync(join(app.getPath('userData'), 'tasks.db'));
+      const body = JSON.parse(db.prepare('SELECT body FROM tasks WHERE id=?').get(id).body);
+      body.updatedAt = '2000-01-01T00:00:00.000Z';
+      db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(body), id); db.close();
+    }, task.id);
+    await page.getByRole('button', { name: '清理过期快照', exact: true }).click();
+    await expect(page.getByText('已清理 3 项；0 项未清理。')).toBeVisible();
+    if (await readFile(join(project, 'README.md'), 'utf8') !== 'ORIGINAL_README_47') throw new Error('Cleanup modified project');
+    report.cases.push({ name: 'explicit retention UI keeps fresh backups, then purges aged disposable backup data via real IPC/SQLite', passed: true, fixtureTimestampsAged: true });
+  }
   await page.getByRole('button', { name: '我理解风险，启用本机 Shell / JavaScript', exact: true }).click();
   await expect(page.getByRole('button', { name: '关闭本机 Shell / JavaScript', exact: true })).toBeVisible();
   await page.screenshot({ path: '.qa/tool-settings-desktop.png', fullPage: true, animations: 'disabled' });
@@ -77,8 +104,9 @@ try {
   await app.close(); await launch();
   const saved = await page.evaluate(() => window.agent47.executionSettings());
   if (saved.hostExecution || saved.fileMode !== 'snapshot') throw new Error('Settings did not persist');
+  if (process.env.AGENT47_BATCH_UNDO === '1' && (await page.evaluate(() => window.agent47.snapshotSettings())).retentionDays !== 7) throw new Error('Retention did not persist');
   report.cases.push({ name: 'global disable revokes all conversation host grants and remains disabled after restart', passed: true });
-  report.result = 'REAL_PERMISSIONS_SNAPSHOTS_E2E_OK'; report.verifiedAt = new Date().toISOString();
-  await writeFile('.qa/permissions-live-results.json', JSON.stringify(report, null, 2));
+  report.result = process.env.AGENT47_BATCH_UNDO === '1' ? 'REAL_RUN_UNDO_RETENTION_E2E_OK' : 'REAL_PERMISSIONS_SNAPSHOTS_E2E_OK'; report.verifiedAt = new Date().toISOString();
+  await writeFile(process.env.AGENT47_BATCH_UNDO === '1' ? '.qa/run-undo-live-results.json' : '.qa/permissions-live-results.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally { await app?.close(); }
