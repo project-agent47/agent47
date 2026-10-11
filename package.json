@@ -33,6 +33,7 @@
     "test:agent-browser:native": "node scripts/e2e-agent-browser-native.mjs",
     "test:agent-browser:live": "node scripts/e2e-agent-browser-live.mjs",
     "test:agent-browser:public-live": "node scripts/e2e-agent-browser-public-live.mjs",
+    "test:browser-observation:live": "node scripts/e2e-browser-observation-live.mjs",
     "package:win": "npm run build && electron-builder --win",
     "package:mac": "npm run build && electron-builder --mac"
   },

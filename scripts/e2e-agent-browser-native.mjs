@@ -15,6 +15,8 @@ async function intent(taskId, toolName, input) {
     const db = new DatabaseSync(join(data.root, 'tasks.db'));
     const row = db.prepare('SELECT body FROM tasks WHERE id=?').get(data.taskId), task = JSON.parse(row.body);
     task.status = 'queued'; task.approval = undefined; task.pending = [{ toolCallId: data.toolCallId, toolName: data.toolName, input: data.input }];
+    // Each injected scenario is a fresh fixture window, not a long-run acceptance.
+    if (task.progress) task.progress.windowStart = task.steps;
     task.messages.push({ role: 'assistant', content: [{ type: 'tool-call', toolCallId: data.toolCallId, toolName: data.toolName, input: data.input }] });
     db.prepare('UPDATE tasks SET body=? WHERE id=?').run(JSON.stringify(task), data.taskId); db.close();
   }, { root: data, taskId, toolName, input, toolCallId });
@@ -50,6 +52,36 @@ try {
   await intent(taskId, 'browserRead', { tabId }); await completed(taskId);
   let snapshot = (await result(taskId)).value;
   if (JSON.stringify(snapshot).includes('PASSWORD_SECRET') || JSON.stringify(snapshot).includes('HIDDEN_VALUE')) throw new Error('Sensitive form values leaked');
+  async function dom(code) { return app.evaluate(async ({ BrowserWindow }, code) => {
+    const wc = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL().startsWith('https:')).webContents;
+    return wc.executeJavaScript(code);
+  }, code); }
+  // B1 fixture: real native DOM/IPC/runtime; model intentions remain explicitly injected.
+  await dom(`const main=document.createElement('main');main.innerHTML='<h2>Scoped article</h2><p>'+ 'LONG_TEXT_'.repeat(1000) + 'TAIL_MARKER</p>';document.body.append(main);true`);
+  await intent(taskId, 'browserRead', { tabId }); await completed(taskId); snapshot = (await result(taskId)).value;
+  const region = snapshot.regions.find(r => r.name === 'Scoped article');
+  if (!region) throw new Error('Missing semantic region ref');
+  await intent(taskId, 'browserRead', { tabId, snapshotId: snapshot.snapshotId, regionRef: region.ref, limit: 500 }); await completed(taskId);
+  const scoped = (await result(taskId)).value;
+  if (scoped.scope.name !== 'Scoped article' || scoped.content.includes('CONTROLLED_BROWSER_TEST') || scoped.nextOffset !== 500 || !scoped.hasMore) throw new Error('Region scope/pagination not bounded');
+  await intent(taskId, 'browserRead', { tabId, snapshotId: scoped.snapshotId, regionRef: region.ref, offset: scoped.capturedCharacters - 500, limit: 500, expectedDigest: scoped.contentDigest }); await completed(taskId);
+  const tail = (await result(taskId)).value;
+  if (!tail.content?.includes('TAIL_MARKER') || tail.hasMore) throw new Error('Scoped pagination tail missing: ' + JSON.stringify(tail));
+  await dom(`document.querySelector('main p').textContent='CHANGED';true`);
+  await intent(taskId, 'browserRead', { tabId, snapshotId: tail.snapshotId, regionRef: region.ref, offset: 500, expectedDigest: scoped.contentDigest }); await completed(taskId);
+  if ((await result(taskId)).type !== 'error-text') throw new Error('Changed page accepted old pagination');
+  await dom(`setTimeout(()=>{const p=document.createElement('p');p.textContent='DELAYED_VISIBLE_EVIDENCE';document.body.append(p)},500);true`);
+  await intent(taskId, 'browserWait', { tabId, condition: { kind: 'text', text: 'DELAYED_VISIBLE_EVIDENCE' }, timeoutMs: 3000 }); await completed(taskId);
+  if ((await result(taskId)).value.outcome !== 'matched') throw new Error('Delayed text did not match');
+  await intent(taskId, 'browserWait', { tabId, condition: { kind: 'element', name: 'Save test note' }, timeoutMs: 1000 }); await completed(taskId);
+  if ((await result(taskId)).value.outcome !== 'matched') throw new Error('Element name not observed');
+  await intent(taskId, 'browserWait', { tabId, condition: { kind: 'text', text: 'PASSWORD_SECRET' }, timeoutMs: 250 }); await completed(taskId);
+  if ((await result(taskId)).value.outcome !== 'timed_out') throw new Error('Wait exposed password');
+  await intent(taskId, 'browserWait', { tabId, condition: { kind: 'url', url: 'https://example.com/' }, timeoutMs: 250 }); await completed(taskId);
+  if ((await result(taskId)).value.outcome !== 'matched') throw new Error('Exact URL not observed');
+  await intent(taskId, 'browserWait', { tabId, condition: { kind: 'url', url: 'https://other.example/' }, timeoutMs: 250 }); await completed(taskId);
+  if ((await result(taskId)).type !== 'error-text') throw new Error('Cross-origin wait permitted');
+  await intent(taskId, 'browserRead', { tabId }); await completed(taskId); snapshot = (await result(taskId)).value;
   let field = snapshot.elements.find(e => e.name === 'Public note');
   await intent(taskId, 'browserFill', { tabId, snapshotId: snapshot.snapshotId, ref: field.ref, text: 'PUBLIC_TEST_NOTE' });
   await page.getByRole('heading', { name: '操作网页', exact: true }).waitFor();
@@ -82,6 +114,6 @@ try {
   await page.getByRole('button', { name: '批准执行', exact: true }).click(); await completed(taskId);
   const opened = (await result(taskId)).value;
   if (!opened.opened || opened.mode !== 'ask') throw new Error('Approved browserOpen failed to grant exact new tab');
-  await writeFile('.qa/agent-browser-native-results.json', JSON.stringify({ result: 'AGENT_BROWSER_NATIVE_OK', modelFixture: true, httpsResponseFixture: true, toolIntents: 'SQLite test injection', cases: ['explicit dock grant', 'bounded refs/no passwords or values', 'exact fill approval', 'denied click has no effect', 'scope upgrade invalidates pending click', 'trusted click real DOM effect', 'dispatch not business success', 'revocation denies reads', 'agent open request uses exact URL approval'] }, null, 2));
+  await writeFile('.qa/agent-browser-native-results.json', JSON.stringify({ result: 'AGENT_BROWSER_NATIVE_OK', modelFixture: true, httpsResponseFixture: true, toolIntents: 'SQLite test injection', cases: ['explicit dock grant', 'bounded refs/no passwords or values', 'semantic region scope', 'version-bound pagination tail', 'changed text rejects stale pagination', 'delayed text wait', 'exact element wait', 'password text not observed', 'exact URL wait', 'cross-origin wait rejected', 'exact fill approval', 'denied click has no effect', 'scope upgrade invalidates pending click', 'trusted click real DOM effect', 'dispatch not business success', 'revocation denies reads', 'agent open request uses exact URL approval'] }, null, 2));
   console.log('AGENT_BROWSER_NATIVE_OK');
 } finally { if (app) await app.close(); clearTimeout(watchdog); }
