@@ -71,6 +71,7 @@ try {
     }, ids);
     if (ids.length < 2 || archives.some(s => !s) || !archives.some(s => s.content.includes(head)) || !archives.some(s => s.content.includes(tail))) throw new Error('Model citation did not bind actual head/tail excerpts');
     const usage = JSON.stringify(task.usage);
+    await page.getByRole('button', { name: '回到当前轮次', exact: true }).click();
     await expect(page.getByLabel('执行轮次', { exact: true })).toHaveValue(task.id);
     await page.locator('.source-citation').last().click();
     await expect(page.getByLabel('来源证据版本与范围')).toContainText('https://example.com/');
