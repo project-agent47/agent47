@@ -127,6 +127,7 @@ function ApprovalPanel({ task, busy, hostEnabled, run, supplement }: { task: Tas
       {scope && <div className="scope-review"><strong>授权范围：本次对话及其后续执行轮次</strong><p>{host ? '允许 Shell / JavaScript 以你的本机用户权限执行，不再逐命令询问。它不是项目目录沙箱；可能修改目录外文件或访问网络。全局关闭本机执行会撤销此授权。' : '允许本次对话创建成果和修改已授权项目文件，不再逐文件询问；项目修改前自动快照，外部改动仍受保护。'}</p></div>}
     </div>
     <div className="decision-actions"><button className="secondary small-button" disabled={busy} onClick={() => allow(false)}><X size={14} />{host ? '拒绝执行' : '拒绝写入'}</button>
+      {!host && action.kind !== 'directory' && <button className="text-button" disabled={busy} onClick={() => void run(async () => { await bridge.workspaceOpen({ kind: 'proposal', taskId: task.id, approvalId: action.id, digest: action.digest }); })}>在工作区预览</button>}
       <button className="text-button" disabled={busy} onClick={supplement}>补充要求</button><span className="decision-spacer" />
       <button className="secondary small-button" disabled={busy || expiry || (host && !hostEnabled)} onClick={() => setScope(!scope)}>{scope ? '收起范围授权' : '按范围授权本次对话…'}</button>
       <button className="primary small-button" disabled={busy || expiry || (host && !hostEnabled)} onClick={() => allow(true, scope)}><Check size={14} />{scope ? '确认范围并批准' : action.kind === 'project_write' ? '批准写入' : action.kind ? '批准执行' : '批准创建'}</button>

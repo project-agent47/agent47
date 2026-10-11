@@ -29,7 +29,7 @@ test('home controls, filters, folder grant, mode guidance, create and stop', asy
   await expect(page.getByText('这是交互预览，没有调用模型或读取文件。', { exact: false })).toBeVisible();
   await expect(page.locator('.task-title .status')).toHaveText('已完成');
 });
-test('approval, inspector, artifact dialog keyboard trap, source and download', async ({ page }) => {
+test('approval, inspector, artifact split workspace, source and download', async ({ page }) => {
   await page.goto('/');
   await page.locator('.task-row').first().click();
   await expect(page.getByRole('button', { name: '批准创建' })).toBeVisible();
@@ -45,15 +45,13 @@ test('approval, inspector, artifact dialog keyboard trap, source and download', 
   await expect(page.locator('.task-title .status')).toHaveText('已完成');
   await page.getByRole('button', { name: '成果库', exact: true }).click();
   await page.locator('.artifact-card').click();
-  await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByLabel('关闭成果预览')).toBeFocused();
-  await page.keyboard.press('Shift+Tab');
-  await expect(page.getByRole('button', { name: '下载示例文件' })).toBeFocused();
+  await expect(page.getByLabel('产物工作区')).toBeVisible();
+  await expect(page.locator('.document-markdown h1')).toContainText('Agent47');
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '下载示例文件' }).click();
   expect((await download).suggestedFilename()).toBe('desktop-checklist.md');
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.getByLabel('收起工作区').click();
+  await expect(page.getByLabel('产物工作区')).not.toBeVisible();
   await page.locator('.artifact-card').click();
   await page.getByRole('button', { name: '查看来源任务' }).click();
   await expect(page.locator('.task-title h1')).toHaveText(/整理 Agent47/);
@@ -226,4 +224,33 @@ test('question draft survives composer overlay, cancel and dense mobile/dark lay
   await page.screenshot({ path: '.qa/decisions-question-mobile.png', animations: 'disabled' });
   await page.getByRole('button', { name: '取消本次提问' }).click();
   await expect(page.locator('.task-title .status')).toHaveText('已完成');
+});
+test('workspace tabs render Markdown, isolated HTML and read-only Monaco, with narrow fallback', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '打开文件', exact: true }).click();
+  await expect(page.locator('.document-markdown table')).toBeVisible();
+  await page.getByRole('button', { name: '体验 HTML', exact: true }).click();
+  await expect(page.frameLocator('iframe').getByRole('heading', { name: '离线 HTML 产物' })).toBeVisible();
+  await page.frameLocator('iframe').getByRole('button').click();
+  await expect(page.frameLocator('iframe').getByRole('button')).toHaveText('桌面版支持隔离交互');
+  await page.getByRole('button', { name: '体验代码', exact: true }).click();
+  await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.view-lines')).toContainText('greet');
+  await page.getByLabel('标签左移').click();
+  await page.getByRole('tab', { name: 'preview-notes.md', exact: true }).click();
+  await expect(page.locator('.document-markdown table')).toBeVisible();
+  await page.screenshot({ path: '.qa/workspace-markdown-light.png', animations: 'disabled' });
+  await page.getByLabel('切换深色模式').click();
+  await page.getByRole('tab', { name: 'example.ts', exact: true }).click();
+  await page.screenshot({ path: '.qa/workspace-code-dark.png', animations: 'disabled' });
+  await page.getByLabel('调整工作区宽度').focus(); await page.keyboard.press('ArrowLeft');
+  await page.setViewportSize({ width: 900, height: 650 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: '.qa/workspace-code-minimum.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.getByRole('button', { name: '其他格式提示', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '暂不支持此格式' })).toBeVisible();
+  await page.screenshot({ path: '.qa/workspace-unsupported-mobile.png', animations: 'disabled' });
+  await page.getByLabel('关闭标签：example.pdf').click();
+  await page.getByLabel('收起工作区').click();
+  await expect(page.getByLabel('任务目标')).toBeVisible();
 });

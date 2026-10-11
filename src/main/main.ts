@@ -17,8 +17,12 @@ import { executeHost } from './host';
 import { FileSnapshots } from '../core/snapshots';
 import { readWeb, webOrigin } from './web';
 import { answerListSchema } from '../shared/questions';
+import { Workspace } from './workspace';
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'agent47-document', privileges: { standard: true, secure: true } }
+]);
 const single = app.requestSingleInstanceLock();
 if (!single) app.quit();
 let window: BrowserWindow | undefined;
@@ -63,6 +67,14 @@ async function boot(): Promise<void> {
   const driver = sdkDriver(() => vault.settings(), transport.fetch,
     failure => console.warn('[model-diagnostic] ' + JSON.stringify(failure)));
   const store = new TaskStore(join(root, 'tasks.db'));
+  const workspace = new Workspace(join(root, 'workspace.json'), store, artifacts, () => window); await workspace.start();
+  handle('workspace:view', () => workspace.view());
+  handle('workspace:open', value => workspace.openSource(value as Parameters<Workspace['openSource']>[0]));
+  handle('workspace:import', () => workspace.importFile());
+  handle('workspace:update', value => workspace.update(value));
+  handle('workspace:refresh', value => workspace.refresh(idSchema.parse(value)));
+  handle('workspace:system', value => workspace.systemOpen(idSchema.parse(value)));
+  handle('workspace:layout', value => workspace.layout(value));
   const skills = new SkillRegistry(join(root, 'skills')); await skills.start();
   let hostExecution = JSON.parse(await readFile(join(root, 'execution.json'), 'utf8').catch(() => 'false')) === true;
   let fileMode = z.enum(['snapshot', 'ask']).parse(JSON.parse(await readFile(join(root, 'file-mode.json'), 'utf8').catch(() => '"snapshot"')));
@@ -211,6 +223,7 @@ async function boot(): Promise<void> {
   });
   window.webContents.on('will-navigate', (event, target) => { if (target !== url) event.preventDefault(); });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.on('close', () => workspace.dispose());
   window.on('closed', () => { window = undefined; });
   app.on('second-instance', () => { window?.show(); window?.focus(); });
   await window.loadURL(url); window.show(); runtime.start();

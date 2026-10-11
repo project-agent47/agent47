@@ -1,0 +1,31 @@
+import type { WorkspaceState, WorkspaceSource, TaskView } from '../shared/contracts';
+import { classifyDocument } from '../shared/documents';
+const state: WorkspaceState = { tabs: [], width: 440, visible: false };
+const clone = () => structuredClone(state);
+function add(name: string, content: string, source: 'file' | 'artifact' | 'proposal', taskId?: string) {
+  const existing = state.tabs.find(t => t.name === name && t.content === content && t.source === source && t.taskId === taskId);
+  if (existing) state.activeId = existing.id;
+  else { const tab = { id: crypto.randomUUID(), name, content, sha256: '0'.repeat(64), kind: classifyDocument(name), source, taskId }; state.tabs.push(tab); state.activeId = tab.id; }
+  state.visible = true; return clone();
+}
+export const previewWorkspace = {
+  view: async () => clone(),
+  open: async (input: WorkspaceSource, tasks: TaskView[]) => {
+    const task = tasks.find(t => t.id === input.taskId)!;
+    if (input.kind === 'proposal') return add(task.approval!.name, task.approval!.content, 'proposal', task.id);
+    const a = task.artifacts.find(a => a.id === input.artifactId)!; return add(a.name, a.content, 'artifact', task.id);
+  },
+  import: async () => add('preview-notes.md', '# 本地文件查看示例\n\n| 能力 | 状态 |\n| --- | --- |\n| 本地查看 | 不自动入模 |\n\n预览不读取真实文件。', 'file'),
+  update: async (input: { activeId?: string; closeId?: string; pauseId?: string; width?: number; visible?: boolean; moveId?: string; direction?: -1 | 1 }) => {
+    if (input.activeId) state.activeId = input.activeId;
+    if (input.pauseId) { const tab = state.tabs.find(t => t.id === input.pauseId); if (tab) tab.paused = true; }
+    if (input.closeId) { state.tabs = state.tabs.filter(t => t.id !== input.closeId); if (state.activeId === input.closeId) state.activeId = state.tabs.at(-1)?.id; if (!state.tabs.length) state.visible = false; }
+    if (input.moveId) { const i = state.tabs.findIndex(t => t.id === input.moveId), j = i + (input.direction ?? 0); if (i >= 0 && j >= 0 && j < state.tabs.length) [state.tabs[i], state.tabs[j]] = [state.tabs[j], state.tabs[i]]; }
+    if (input.width) state.width = input.width; if (input.visible !== undefined) state.visible = input.visible;
+    return clone();
+  },
+  refresh: async (id: string) => { const tab = state.tabs.find(t => t.id === id); if (tab) tab.paused = false; return clone(); },
+  demo: async (kind: 'html' | 'code' | 'unsupported') => kind === 'html'
+    ? add('offline-demo.html', '<!doctype html><html lang="zh"><body style="font:14px system-ui;padding:16px"><h2>离线 HTML 产物</h2><p>示例数据，不调用模型。网页脚本在交互预览中关闭。</p><button onclick="this.textContent=\'已点击\'">桌面版支持隔离交互</button></body></html>', 'file')
+    : add(kind === 'code' ? 'example.ts' : 'example.pdf', kind === 'code' ? 'export function greet(name: string) {\n  return `Hello, ${name}`;\n}\n' : '', 'file')
+};
