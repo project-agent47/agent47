@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { ModelMessage } from 'ai';
 import { TaskStore, publicTask, type TaskRecord, type ToolCall } from './store';
-import { readTool, approvalFor, applyArtifact } from './tools';
+import { readTool, approvalFor, applyArtifact, sha256 } from './tools';
 import type { ModelDriver } from './model';
-import type { SkillId, TaskView, RunUndo } from '../shared/contracts';
+import type { SkillId, TaskView, RunUndo, UserQuestion, QuestionDraftInput, QuestionReply } from '../shared/contracts';
+import { parseQuestions, validateAnswers, answerSummary } from '../shared/questions';
 import { z } from 'zod';
 import { effectNames, prepareEffect, applyProjectWrite, effectDigest, type HostExecutor } from './effects';
 import { projectedMessages, compactionCut, estimateTokens } from './context';
@@ -38,6 +39,15 @@ export class TaskRuntime {
   constructor(readonly store: TaskStore, private model: ModelDriver, private artifactRoot: string, private changed: () => void = () => {}, private services: RuntimeServices = {}) {}
   start(): void {
     for (const task of this.store.list()) {
+      // Additive checkpoint migration; preserve old tool-call identity and state.
+      if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser' && !task.question?.digest) {
+        try { task.question = this.questionFor(task, task.pending[0]); }
+        catch {
+          this.toolResult(task, task.pending[0], 'Invalid saved question. Ask again with a valid format.', true);
+          task.question = undefined; task.status = 'queued';
+        }
+        this.save(task);
+      }
       if (task.undo?.state === 'running') {
         task.undo.state = 'partial'; this.event(task, 'system', '整轮撤销被重启中断；已恢复项保留，请检查后重试，不自动继续。'); this.save(task);
       }
@@ -65,7 +75,7 @@ export class TaskRuntime {
     this.event(task, 'user', task.goal); this.save(task); this.kick();
     return publicTask(task);
   }
-  send(id: string, text: string, mode: 'queue' | 'steer' | 'followup', commandId: string): TaskView {
+  send(id: string, text: string, mode: 'queue' | 'steer' | 'followup', commandId: string, instruction = false): TaskView {
     if (!text.trim() || text.length > 12000) throw new Error('Invalid message');
     const prior = this.store.command(commandId);
     if (prior) return publicTask(this.store.get(prior));
@@ -76,22 +86,24 @@ export class TaskRuntime {
       const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
       if (latest?.id !== id) throw new Error('Conversation already continued; open the latest run');
       const parent = task;
-      const hadQueue = !!parent.queuedInput?.length;
+      const hadQueue = !!parent.queuedInput?.length, hadDraft = !!parent.composerDraft;
+      if (hadDraft) parent.composerDraft = '';
       task = this.fork(parent, text, true); if (hadQueue) parent.queuedInput = [];
-      this.store.saveCommand(commandId, task, hadQueue ? parent : undefined); this.changed(); this.kick(); return publicTask(task);
+      this.store.saveCommand(commandId, task, hadQueue || hadDraft ? parent : undefined); this.changed(); this.kick(); return publicTask(task);
     }
     if (task.status === 'awaiting_reconciliation') throw new Error('Inspect unknown host effects before continuing');
-    if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser') {
+    if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser' && task.question?.legacy && !instruction) {
       this.toolResult(task, task.pending[0], { answer: text.trim(), fromUser: true });
       task.question = undefined; task.status = 'queued'; this.event(task, 'user', text.trim());
     } else {
       if ((task.queuedInput?.length ?? 0) >= 32) throw new Error('Task queue full: remove or deliver pending messages first');
       task.queuedInput ??= []; task.queuedInput.push({ id: commandId, text: text.trim(), mode });
-      if (task.status === 'awaiting_approval' && mode === 'steer') {
+      if (['awaiting_approval', 'awaiting_input'].includes(task.status) && mode === 'steer') {
         if (task.approval) task.approval.state = 'denied';
-        task.status = 'queued';
+        task.status = 'queued'; task.question = undefined;
       }
     }
+    task.composerDraft = '';
     this.store.saveCommand(commandId, task);
     if (mode === 'steer') this.interruptModel(id);
     this.changed(); this.kick(); return publicTask(task);
@@ -135,6 +147,56 @@ export class TaskRuntime {
   }
   setWebOrigins(id: string, origins: string[]): void {
     const task = this.store.get(id); task.webOrigins = [...new Set(origins)]; this.save(task);
+  }
+  private questionFor(task: TaskRecord, call: ToolCall): UserQuestion {
+    const { questions, legacy } = parseQuestions(call.input);
+    return { id: call.toolCallId, text: questions.map(q => q.prompt).join('\n'), questions, legacy, revision: 1,
+      digest: sha256(JSON.stringify({ taskId: task.id, callId: call.toolCallId, questions, legacy, revision: 1 })) };
+  }
+  private pendingQuestion(input: { taskId: string; questionId: string; revision: number; digest: string }) {
+    const task = this.store.get(input.taskId), call = task.pending[0];
+    if (task.status !== 'awaiting_input' || call?.toolName !== 'askUser') throw new Error('请刷新：本次提问已结束或作废。');
+    const expected = this.questionFor(task, call), question = task.question;
+    if (!question || question.id !== input.questionId || question.revision !== input.revision || question.digest !== input.digest ||
+      expected.digest !== input.digest || JSON.stringify(question.questions) !== JSON.stringify(expected.questions)) throw new Error('请刷新：提问版本不匹配。');
+    return { task, call, question };
+  }
+  saveQuestionDraft(input: QuestionDraftInput) {
+    const { task, question } = this.pendingQuestion(input);
+    const answers = validateAnswers(question.questions!, input.answers, false);
+    if (!Number.isInteger(input.step) || input.step < 0 || input.step > question.questions!.length) throw new Error('Invalid question step');
+    if ((question.draft?.version ?? 0) !== input.expectedVersion) {
+      if (question.draft?.version === input.expectedVersion + 1 && question.draft.step === input.step &&
+        JSON.stringify(question.draft.answers) === JSON.stringify(answers)) return question.draft;
+      throw new Error('请刷新：回答草稿已被其他操作更新。');
+    }
+    question.draft = { answers, step: input.step, version: input.expectedVersion + 1 }; this.save(task); return question.draft;
+  }
+  respondQuestion(input: QuestionReply): TaskView {
+    const receipt = sha256(JSON.stringify(input));
+    const prior = this.store.command(input.clientCommandId);
+    if (prior) {
+      const task = this.store.get(prior);
+      if (prior !== input.taskId || task.questionReceipts?.[input.clientCommandId] !== receipt) throw new Error('请使用新的提交编号：旧编号对应不同操作。');
+      return publicTask(task);
+    }
+    const { task, call, question } = this.pendingQuestion(input);
+    if (!['answers', 'cancel'].includes(input.result)) throw new Error('Invalid question result');
+    const answers = input.result === 'answers' ? validateAnswers(question.questions!, input.answers) : [];
+    if (input.result === 'cancel' && input.answers.length) throw new Error('Invalid cancelled answer');
+    const summary = input.result === 'cancel' ? '用户取消本次提问。' : answerSummary(question.questions!, answers);
+    this.toolResult(task, call, input.result === 'cancel' ? { cancelled: true, fromUser: true } :
+      question.legacy ? { answer: answers[0].customText!, fromUser: true } : { answers, summary, fromUser: true });
+    task.question = undefined; task.status = 'queued';
+    // A normal queue cannot silently replace the human's just-submitted decision.
+    task.inputBoundary = false; task.queueAfterStep = task.steps + 1;
+    task.questionReceipts ??= {}; task.questionReceipts[input.clientCommandId] = receipt;
+    this.event(task, 'user', summary);
+    this.store.saveCommand(input.clientCommandId, task); this.changed(); this.kick(); return publicTask(task);
+  }
+  saveComposerDraft(id: string, text: string): void {
+    if (text.length > 12000) throw new Error('Invalid composer draft');
+    const task = this.store.get(id); task.composerDraft = text; this.save(task);
   }
   async restoreFile(id: string, snapshotId: string): Promise<void> {
     const task = this.store.get(id);
@@ -253,20 +315,33 @@ export class TaskRuntime {
     const task = this.store.get(id);
     if (terminal.has(task.status)) throw new Error('Finished tasks cannot be cancelled or resumed');
     task.status = 'cancelled';
+    task.question = undefined;
     if (task.approval?.state === 'pending') task.approval.state = 'denied';
     this.active.get(id)?.abort();
     this.event(task, 'system', '任务已停止。已保存的成果会保留。'); this.save(task);
   }
-  decide(id: string, approvalId: string, digest: string, approve: boolean): void {
+  decide(id: string, approvalId: string, digest: string, approve: boolean, scope?: 'files' | 'host', reason?: string): void {
     const task = this.store.get(id);
     const action = task.approval;
     if (task.status !== 'awaiting_approval' || !action || action.id !== approvalId || action.state !== 'pending' || action.digest !== digest) throw new Error('Approval is stale or does not match this task and payload');
     if (Date.parse(action.expiresAt) <= Date.now()) throw new Error('Approval expired. Stop this task and start a new one.');
     if ((action.kind ? effectDigest(id, action) : approvalFor(id, action.id, action).digest) !== digest) throw new Error('Approval payload changed');
+    if (reason && reason.length > 2000) throw new Error('Invalid denial reason');
+    if (scope) {
+      if (!approve || (scope === 'host' && (!['shell', 'code'].includes(action.kind ?? '') || !task.root || !this.services.hostEnabled?.())) ||
+        (scope === 'files' && ['shell', 'code'].includes(action.kind ?? ''))) throw new Error('请检查授权范围与工具设置。');
+      if (scope === 'files' && !this.services.snapshots) throw new Error('Snapshot service unavailable');
+      if (scope === 'host') task.hostMode = 'allow'; else task.fileMode = 'snapshot';
+      this.event(task, 'system', scope === 'host' ? '用户授权本次对话本机执行，免重复确认；不是安全沙箱。' : '用户授权本次对话文件自动快照，免逐文件确认。');
+    }
     action.state = approve ? 'approved' : 'denied';
     task.status = 'queued';
     const verb = action.kind === 'project_write' ? '写入' : action.kind ? '执行' : '创建';
     this.event(task, 'system', approve ? `已批准${verb} ${action.name}。` : `已拒绝${verb} ${action.name}。`);
+    if (!approve && reason?.trim()) {
+      action.denialReason = reason.trim(); this.event(task, 'user', `拒绝原因：${reason.trim()}`);
+    }
+    task.inputBoundary = false; task.queueAfterStep = task.steps + 1;
     this.save(task); this.kick();
   }
   shutdown(): void {
@@ -369,8 +444,7 @@ export class TaskRuntime {
           const call = task.pending[0];
           if (call.toolName === 'askUser') {
             try {
-              const { question } = z.object({ question: z.string().min(1).max(2000) }).strict().parse(call.input);
-              task.question = { id: call.toolCallId, text: question }; task.status = 'awaiting_input'; this.save(task); return;
+              task.question = this.questionFor(task, call); task.status = 'awaiting_input'; this.save(task); return;
             } catch { this.toolResult(task, call, 'Invalid question', true); this.save(task); continue; }
           }
           if (effectNames.has(call.toolName)) {
@@ -389,7 +463,7 @@ export class TaskRuntime {
               this.save(task);
             }
             const action = task.approval;
-            if (action.state === 'denied') { this.toolResult(task, call, 'User denied this action. Respect denial.', true); this.save(task); continue; }
+            if (action.state === 'denied') { this.toolResult(task, call, `User denied this action. Respect denial.${action.denialReason ? ` Reason: ${action.denialReason}` : ''}`, true); this.save(task); continue; }
             const autoFile = ['project_write', 'directory'].includes(action.kind ?? '') && task.fileMode === 'snapshot' && !!this.services.snapshots;
             const autoHost = ['shell', 'code'].includes(action.kind ?? '') && task.hostMode === 'allow' && !!this.services.hostEnabled?.();
             if (action.state === 'pending' && (autoFile || autoHost)) { action.state = 'approved'; this.save(task); }
@@ -429,7 +503,7 @@ export class TaskRuntime {
             }
             if (task.approval.state === 'pending' && task.fileMode === 'snapshot') { task.approval.state = 'approved'; this.save(task); }
             if (task.approval.state === 'denied') {
-              this.toolResult(task, call, 'User denied this write. Respect the denial.', true);
+              this.toolResult(task, call, `User denied this write. Respect the denial.${task.approval.denialReason ? ` Reason: ${task.approval.denialReason}` : ''}`, true);
             } else if (task.approval.state === 'approved') {
               // No renderer mutation is possible. Fence asynchronous side effects after cancellation.
               const artifact = await applyArtifact(this.artifactRoot, id, task.approval);

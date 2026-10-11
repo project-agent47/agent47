@@ -3,6 +3,7 @@ import { ArrowUp, ArrowUpRight, ArrowLeft, Plus, Folder, FileText, Inbox, Slider
 import { bridge } from './bridge';
 import type { TaskView, SkillId, FolderGrant, ProviderView, Artifact, SkillView, SkillImport, ExecutionSettings, SnapshotSettings } from '../shared/contracts';
 import { Markdown } from './Markdown';
+import { ConsentPanel, DecisionPanel, MessageComposer, type LocalDecision } from './DecisionPanel';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
 const statusLabels: Record<TaskView['status'], string> = {
@@ -38,7 +39,9 @@ export function App() {
   const [inspector, setInspector] = useState(false);
   const [artifact, setArtifact] = useState<{ task: TaskView; artifact: Artifact }>();
   const [connection, setConnection] = useState<ProviderView>();
-  const [reply, setReply] = useState('');
+  const [editingDecision, setEditingDecision] = useState(false);
+  const [localDecision, setLocalDecision] = useState<LocalDecision>();
+  const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [extensions, setExtensions] = useState<SkillView[]>([]);
   const [skillImport, setSkillImport] = useState<SkillImport>();
   const [hostEnabled, setHostEnabled] = useState(false);
@@ -46,6 +49,9 @@ export function App() {
   const goalRef = useRef<HTMLTextAreaElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const task = tasks.find(t => t.id === selected);
+  const needsDecision = !!task && (['awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
+  useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
+  useEffect(() => { if (!needsDecision) setEditingDecision(false); }, [needsDecision]);
   const pending = tasks.filter(t => t.status === 'awaiting_approval').length;
   const active = tasks.filter(t => ['running', 'queued'].includes(t.status)).length;
   const refresh = async () => {
@@ -129,6 +135,7 @@ export function App() {
             <div className="composer-bottom"><div className="composer-options"><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
           </form>
           <div className="composer-note"><ShieldCheck size={14} />{(folder?.fileMode ?? fileMode) === 'snapshot' ? '选择项目即授权文件读写；改动前自动快照，可恢复。' : '已选项目可读取；文件与目录修改逐次确认。'}<span>⌘ / Ctrl + Enter</span></div>
+          {bridge.preview && <button className="text-button" onClick={() => void run(async () => { const created = await bridge.createTask({ goal: '多题演示：选择报告受众与内容', skill: 'general' }); setSelected(created.id); })}>体验多题选择与自定义回答<ChevronRight size={14} /></button>}
           <button className="text-button" onClick={() => go('settings')}>工具设置 · 文件{fileMode === 'snapshot' ? '自动快照' : '逐次确认'} · Shell / JavaScript {hostEnabled ? '已启用' : '未启用'}<SlidersHorizontal size={14} /></button>
           {!bridge.preview && !connection?.configured && <button className="connect-callout" onClick={() => go('settings')}><Cable size={18} /><span>先连接一个模型，再开始真实任务。</span><ArrowUpRight size={17} /></button>}
           <section className="starter-section"><div className="section-label">从一个明确的目标开始<span>没有强制 workflow</span></div><div className="starters">
@@ -148,12 +155,17 @@ export function App() {
             <label>文件与目录<select aria-label="本次对话文件权限" disabled={busy} value={task.fileMode ?? 'ask'} onChange={e => void run(() => bridge.setTaskPermissions({ taskId: task.id, fileMode: e.target.value as 'snapshot' | 'ask', hostMode: task.hostMode ?? 'ask' }))}><option value="snapshot">自动快照，免逐文件确认</option><option value="ask">每次修改确认</option></select></label>
             <label>Shell / JavaScript<select aria-label="本次对话执行权限" disabled={busy || !hostEnabled || !task.root} value={task.hostMode ?? 'ask'} onChange={e => {
               const mode = e.target.value as 'ask' | 'allow';
-              if (mode === 'allow' && !window.confirm('授权本次对话的 Shell / JavaScript 免逐次确认。不是安全沙箱，可访问本机文件和网络；Shell 修改不在文件快照覆盖范围内。仅对可信任务启用。')) return;
+              if (mode === 'allow') { setLocalDecision({ title: '授权本次对话本机执行', detail: 'Shell / JavaScript 不再逐次确认。不是安全沙箱，可访问本机文件与网络；这些改动不受文件快照保护。全局关闭本机执行会撤销旧授权。',
+                confirmLabel: '授权本次对话免确认', confirm: () => bridge.setTaskPermissions({ taskId: task.id, fileMode: task.fileMode ?? 'ask', hostMode: 'allow' }) }); return; }
               void run(() => bridge.setTaskPermissions({ taskId: task.id, fileMode: task.fileMode ?? 'ask', hostMode: mode }));
             }}><option value="ask">{hostEnabled ? '每次执行确认' : '未启用（到工具设置开启）'}</option><option value="allow">本次对话免确认（可信任务）</option></select></label>
+            <button className="secondary small-button" disabled={busy || !task.root || task.unknownEffect} onClick={() => setLocalDecision({
+              title: '开启可信对话', detail: `项目：${task.root}\n本次对话及后续轮次，文件自动快照，Shell / JavaScript 免重复确认。如果本机执行关闭，会同时启用它。\n本机代码拥有你的系统用户权限，不是项目目录沙箱，可能读写目录外文件和访问网络；文件快照不覆盖 Shell / JavaScript 的改动。\n仅对你信任的任务使用；可随时退回逐次确认或全局关闭本机执行。`,
+              confirmLabel: '我理解范围，开启可信对话', confirm: async () => { await bridge.setExecutionSettings({ hostExecution: true }); await bridge.setTaskPermissions({ taskId: task.id, fileMode: 'snapshot', hostMode: 'allow' }); }
+            })}>开启可信对话</button>
             <button className="text-button" onClick={() => go('settings')}>工具设置<SlidersHorizontal size={14} /></button>
           </section></details>
-          <WebAccess task={task} busy={busy} run={run} />
+          <WebAccess task={task} busy={busy} run={run} request={setLocalDecision} />
           <div className={inspector ? 'task-layout with-inspector' : 'task-layout'}><div className="conversation">
             {task.events.filter(e => ['assistant', 'user', 'error', 'reasoning', 'tool'].includes(e.kind)).map(e => e.kind === 'tool'
               ? <details className="tool-event" key={e.id}><summary><CheckCircle2 size={13} />{e.text.split(' · ')[0]}<time>{time(e.at)}</time></summary><pre>{e.text}</pre></details> : e.kind === 'reasoning'
@@ -163,36 +175,30 @@ export function App() {
             {task.draft?.text && <article className="message assistant streaming"><div className="message-icon"><Logo small /></div><div className="message-body"><div className="message-author">Agent47 · 流式输出</div><Markdown>{task.draft.text}</Markdown></div></article>}
             {task.context && <div className="context-note">上下文预估 {task.context.estimatedTokens.toLocaleString()}（本地保守估计，非供应商 tokens） · 自动压缩 {task.context.compactions} 次 · 原始历史保留</div>}
             {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).some(t => t.fileChanges?.length) && <details className="file-changes"><summary>文件改动与恢复点（写入前自动备份）</summary>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).flatMap(owner => [...(owner.fileChanges ?? [])].reverse().map(change => <div className="snapshot-row" key={`${owner.id}-${change.id}`}><span>{change.path}<small>第 {owner.runNumber ?? 1} 轮 · {change.state === 'restored' ? '已恢复' : change.state === 'cleaned' ? '备份已清理，不能恢复' : '可恢复'}</small></span><button className="secondary small-button" disabled={busy || change.state !== 'saved' || !['completed', 'failed', 'cancelled'].includes(task.status)} onClick={() => {
-              if (window.confirm(`恢复 ${change.path} 到此次改动前？新建文件将删除，已有文件恢复原文；外部改动会拒绝覆盖。`)) void run(() => bridge.restoreFile({ taskId: owner.id, snapshotId: change.id }));
+              setLocalDecision({ title: `恢复 ${change.path}`, detail: '恢复到此次改动前；新建文件将删除，已有文件恢复原文，外部改动会拒绝覆盖。对话和主机/远端操作不回退。', confirmLabel: '确认恢复', confirm: () => bridge.restoreFile({ taskId: owner.id, snapshotId: change.id }) });
             }}>恢复改动前</button></div>))}<p className="context-note">只覆盖 writeFile / editFile / makeDirectory，不回退聊天、Shell 改动或远端操作。多次修改同一文件请从最近一次恢复。</p>
               {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id) && t.fileChanges?.some(change => change.state === 'saved')).map(owner => <button className="secondary" disabled={busy || !['completed', 'failed', 'cancelled'].includes(task.status)} key={owner.id} onClick={() => {
-                if (window.confirm(`撤销第 ${owner.runNumber ?? 1} 轮在 ${owner.root} 的 ${owner.fileChanges!.filter(change => change.state === 'saved').length} 项文件工具改动？按倒序恢复，冲突项及其旧版本保留；不是原子事务，不撤销 Shell/远端效果。`)) void run(() => bridge.undoRun(owner.id));
+                setLocalDecision({ title: `撤销第 ${owner.runNumber ?? 1} 轮文件改动`, detail: `${owner.root}：${owner.fileChanges!.filter(change => change.state === 'saved').length} 项，按倒序恢复。冲突项及其旧版本保留；不是原子事务，不撤销 Shell 或远端效果。`, confirmLabel: '确认撤销本轮文件', confirm: () => bridge.undoRun(owner.id) });
               }}>撤销第 {owner.runNumber ?? 1} 轮文件改动</button>)}
               {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id) && t.undo).map(owner => <div className="context-note" role="status" key={owner.id}>第 {owner.runNumber ?? 1} 轮撤销：{owner.undo!.state === 'running' ? '进行中' : owner.undo!.state === 'completed' ? '已完成' : '部分恢复 / 需要检查'} · 恢复 {owner.undo!.restored} 项 · 冲突 {owner.undo!.conflicts.length} 项{owner.undo!.conflicts.map(conflict => <p key={conflict.path}>{conflict.path}：{conflict.error}</p>)}</div>)}
             </details>}
             {(task.status === 'running' || task.status === 'queued') && <div className="working-state" role="status"><LoaderCircle size={16} className="spin" />{task.status === 'queued' ? '已进入本地队列，等待执行…' : '正在推进任务，进展会保存在本地…'}</div>}
-            {task.status === 'awaiting_approval' && task.approval && <section className="approval-card">
-              <div className="approval-top"><span className="approval-icon"><ShieldCheck size={21} /></span><div><div className="eyebrow">需要你的确认</div><h2>{task.approval.kind === 'project_write' ? '修改项目文件' : task.approval.kind ? '执行本机工具' : '创建一份成果文件'}</h2></div><span className="badge">一次性授权</span></div>
-              <p>{task.approval.kind === 'project_write' ? '写入授权项目目录，完整新内容如下；原文件变化后将拒绝执行。' : task.approval.kind ? '这不是安全沙箱。命令/代码以你的系统用户权限执行，可能读写目录以外的数据或访问网络；仅批准你信任的完整内容。' : '只写入 Agent47 成果库，不修改项目目录。请审阅下面的完整内容。'}</p>
-              {task.approval.kind && <p className="context-note">目录：{task.approval.root} {task.approval.payload?.cwd ? ` · cwd ${task.approval.payload.cwd}` : ''}</p>}
-              {task.approval.before !== undefined && <details className="reasoning"><summary>修改前内容</summary><pre>{task.approval.before}</pre></details>}
-              <div className="file-preview"><div className="file-preview-bar"><FileText size={15} /><strong>{task.approval.name}</strong><span>{new TextEncoder().encode(task.approval.content).length} B</span></div><pre>{task.approval.content}</pre></div>
-              <div className="approval-footer"><span>授权绑定当前对象与完整内容，24 小时后失效。</span><div><button className="secondary" disabled={busy} onClick={() => void run(() => bridge.decide({ taskId: task.id, approvalId: task.approval!.id, digest: task.approval!.digest, approve: false }))}><X size={16} />{task.approval.kind === 'shell' || task.approval.kind === 'code' ? '拒绝执行' : '拒绝写入'}</button><button className="primary" disabled={busy} onClick={() => void run(() => bridge.decide({ taskId: task.id, approvalId: task.approval!.id, digest: task.approval!.digest, approve: true }))}><Check size={16} />{task.approval.kind === 'project_write' ? '批准写入' : task.approval.kind ? '批准执行' : '批准创建'}</button></div></div>
-            </section>}
-            {task.status === 'awaiting_input' && <section className="question-card"><h2>需要你的补充</h2><Markdown>{task.question?.text ?? ''}</Markdown><p>直接在下方回答；回复不授予任何额外工具权限。</p></section>}
-            {(task.status === 'awaiting_reconciliation' || (task.status === 'cancelled' && task.unknownEffect)) && <section className="question-card"><h2>主机执行结果未知</h2><p>请先检查项目与系统的实际效果。恢复不会重放原命令；已停止轮次仍保持停止。</p><button className="secondary" onClick={() => void run(() => bridge.resolveUnknown(task.id))}>我已检查，不重放并继续</button></section>}
+            {needsDecision && <button className="decision-anchor text-button" onClick={() => { setEditingDecision(false); document.querySelector('.composer-dock')?.scrollIntoView({ block: 'nearest' }); }}>等待你的{task.status === 'awaiting_input' ? '回答' : task.unknownEffect ? '检查' : '确认'} · 在底部完成<ChevronRight size={14} /></button>}
             {!!task.artifacts.length && <section className="task-artifacts"><h2>这次任务的成果</h2>{task.artifacts.map(a => <button className="artifact-row" key={a.id} onClick={() => setArtifact({ task, artifact: a })}><FileText size={22} /><span><strong>{a.name}</strong><small>已保存 · {bridge.preview ? '示例成果' : '内容校验可追溯'}</small></span><ArrowUpRight size={17} /></button>)}</section>}
             {['failed', 'cancelled'].includes(task.status) && <div className="task-end-note">这个任务已结束，不会自动重新执行。你可以复制目标，创建一个新任务。<button className="text-button" onClick={() => { setGoal(task.goal); setSkill(task.skill); setSelected(undefined); }}>带入新任务<ArrowUpRight size={14} /></button></div>}
             {task.status === 'completed' && <div className="completion-note"><CheckCircle2 size={15} />任务已完成。已结束的任务不会被重新执行。</div>}
           </div>
-          {inspector && <aside className="inspector"><div className="inspector-heading"><h2>执行详情</h2><button className="icon-button" aria-label="关闭执行详情" onClick={() => setInspector(false)}><PanelRightClose size={17} /></button></div><div className="permission-summary"><span>本次权限</span><p><Folder size={14} />{task.root || '未授权任何项目目录'}</p><p><ShieldCheck size={14} />写入与主机执行逐次审批</p></div><h3>事件记录</h3><div className="event-timeline">{task.events.map(e => <div key={e.id} className="timeline-event"><span className="timeline-dot" /><div><time>{time(e.at)} · {({ user: '目标', assistant: '回复', reasoning: '推理', tool: '工具', system: '状态', error: '错误' })[e.kind]}</time><p>{e.text.length > 240 ? e.text.slice(0, 240) + '…' : e.text}</p></div></div>)}</div><div className="inspector-foot">任务与检查点保存在本地。<br />模型请求由所选服务处理。</div></aside>}
+          {inspector && <aside className="inspector"><div className="inspector-heading"><h2>执行详情</h2><button className="icon-button" aria-label="关闭执行详情" onClick={() => setInspector(false)}><PanelRightClose size={17} /></button></div><div className="permission-summary"><span>本次权限</span><p><Folder size={14} />{task.root || '未授权任何项目目录'}</p><p><ShieldCheck size={14} />文件：{task.fileMode === 'snapshot' ? '自动快照' : '逐次确认'}；本机执行：{!hostEnabled ? '关闭' : task.hostMode === 'allow' ? '已授权，免重复确认' : '逐次确认'}</p></div><h3>事件记录</h3><div className="event-timeline">{task.events.map(e => <div key={e.id} className="timeline-event"><span className="timeline-dot" /><div><time>{time(e.at)} · {({ user: '目标', assistant: '回复', reasoning: '推理', tool: '工具', system: '状态', error: '错误' })[e.kind]}</time><p>{e.text.length > 240 ? e.text.slice(0, 240) + '…' : e.text}</p></div></div>)}</div><div className="inspector-foot">任务与检查点保存在本地。<br />模型请求由所选服务处理。</div></aside>}
           </div>
           <section className="composer-dock" aria-label="对话输入区">
-            {!!task.queuedInput?.length && <div className="message-queue" aria-label="待发送消息"><div className="queue-heading">待发送 · {task.queuedInput.length}<span>{['completed', 'cancelled', 'failed'].includes(task.status) ? '已暂停，点击立即发送继续' : task.status === 'awaiting_approval' ? '审批等待中，立即发送可改写要求' : '下一个工具边界合并发送'}</span></div>{task.queuedInput.map(item => <div className="queue-row" key={item.id}><p>{item.text}</p><button className="secondary small-button" disabled={busy || task.status === 'awaiting_reconciliation'} onClick={() => void run(async () => { const next = await bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'send' }); setSelected(next.id); })}>立即发送</button><button className="icon-button" aria-label={`删除待发送消息：${item.text}`} disabled={busy} onClick={() => void run(() => bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'delete' }))}><X size={15} /></button></div>)}</div>}
-            <form className="reply-composer" onSubmit={event => { event.preventDefault(); if (!reply.trim() || busy) return; void run(async () => { const next = await bridge.sendMessage({ taskId: task.id, text: reply.trim(), mode: 'queue', clientMessageId: crypto.randomUUID() }); setSelected(next.id); setReply(''); }); }}>
-              <label className="sr-only" htmlFor="reply">继续对话</label><textarea id="reply" value={reply} onChange={e => setReply(e.target.value)} maxLength={12000} rows={2} placeholder={task.status === 'awaiting_input' ? '回答上面的问题…' : '补充要求或继续追问…'} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
-              <div className="composer-bottom"><span className="context-note">Enter 发送 · Shift + Enter 换行 · {['running', 'queued', 'awaiting_approval'].includes(task.status) ? '先加入队列，可立即打断模型；工具不强杀' : '继续对话不重放旧动作'}</span><button className="primary small-button" type="submit" disabled={!reply.trim() || busy || task.status === 'awaiting_reconciliation' || (task.unknownEffect && task.status !== 'running')}>发送消息<ArrowUp size={16} /></button></div>
-            </form>
+            {!!task.queuedInput?.length && <div className="message-queue" aria-label="待发送消息"><div className="queue-heading">待发送 · {task.queuedInput.length}<span>{['completed', 'cancelled', 'failed'].includes(task.status) ? '已暂停，点击立即发送继续' : needsDecision ? '等待本次决定；立即发送会作废旧决定' : '下一个工具边界合并发送'}</span></div>{task.queuedInput.map(item => <div className="queue-row" key={item.id}><p>{item.text}</p><button className="secondary small-button" disabled={busy || task.unknownEffect && task.status !== 'running'} onClick={() => {
+              const send = async () => { const next = await bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'send' }); setSelected(next.id); };
+              if (needsDecision) setLocalDecision({ title: '用补充要求替换当前决定？', detail: `将立即发送：${item.text}\n旧问题或审批将作废，不能再提交；其他排队消息继续等待。已开始的工具不会强杀或重放。`, confirmLabel: '作废旧决定并立即发送', confirm: send });
+              else void run(send);
+            }}>立即发送</button><button className="icon-button" aria-label={`删除待发送消息：${item.text}`} disabled={busy} onClick={() => void run(() => bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'delete' }))}><X size={15} /></button></div>)}</div>}
+            {localDecision ? <ConsentPanel decision={localDecision} busy={busy} run={run} close={() => setLocalDecision(undefined)} />
+              : needsDecision && !editingDecision ? <DecisionPanel task={task} busy={busy} hostEnabled={hostEnabled} run={run} supplement={() => setEditingDecision(true)} />
+                : <MessageComposer key={task.id} task={{ ...task, composerDraft: composerDrafts[task.id] ?? task.composerDraft }} busy={busy} run={run} sent={id => { setSelected(id); setEditingDecision(false); }} editing={needsDecision} back={() => setEditingDecision(false)} remember={text => setComposerDrafts(old => ({ ...old, [task.id]: text }))} />}
           </section>
         </div>}
         {page === 'artifacts' && <div className="standard-page page-enter"><div className="page-eyebrow">可审阅，可带走</div><h1>成果库</h1><p className="page-description">经过确认的交付物集中在这里。每份成果都能回到它的来源任务。</p><div className="artifact-grid">{tasks.flatMap(t => t.artifacts.map(a => <button className="artifact-card" key={`${t.id}-${a.id}`} onClick={() => setArtifact({ task: t, artifact: a })}><span className="artifact-type"><FileText size={25} /><span>{a.name.split('.').pop()?.toUpperCase()}</span></span><h2>{a.name}</h2><p>{t.goal}</p><div><span>{bridge.preview ? '示例成果' : '已批准创建'} · {time(t.updatedAt)}</span><ArrowUpRight size={16} /></div></button>))}</div>{!tasks.some(t => t.artifacts.length) && <div className="empty-state bordered"><Layers size={30} /><h3>还没有已保存的成果</h3><p>批准任务中的写入申请后，成果会出现在这里。</p><button className="secondary" onClick={() => go('home')}>回到任务中心<ArrowUpRight size={15} /></button></div>}</div>}
@@ -219,15 +225,17 @@ export function App() {
   </div>;
 }
 
-function WebAccess({ task, busy, run }: { task: TaskView; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void> }) {
+function WebAccess({ task, busy, run, request }: { task: TaskView; busy: boolean; run: (operation: () => Promise<unknown>) => Promise<void>; request: (decision: LocalDecision) => void }) {
   const [url, setUrl] = useState('');
   return <details className="permission-disclosure web-access"><summary>网页读取 · {task.webOrigins?.length ?? 0} 个授权站点</summary>
     <form onSubmit={event => { event.preventDefault(); void run(async () => {
       const parsed = new URL(url);
       if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('请使用不含登录信息的 HTTPS 站点地址。');
       const origin = parsed.origin;
-      if (!window.confirm(`授权本次对话读取 ${origin} 的公开 HTTPS 页面？请求不携带登录 Cookie 或模型密钥，内容会发送给 DeepSeek；无脚本、点击或表单提交能力。GET 不是远端操作回滚机制，请勿授权有副作用的接口。`)) return;
-      await bridge.setWebOrigins({ taskId: task.id, origins: [...(task.webOrigins ?? []), origin] }); setUrl('');
+      request({ title: '授权本次对话读取站点', detail: `${origin}\n公开 HTTPS 请求不携带登录 Cookie 或模型密钥，内容会发送给 DeepSeek；不执行脚本、点击或提交表单。GET 不是远端回滚机制，请勿授权有副作用的接口。`, confirmLabel: '确认授权站点', confirm: async () => {
+        const current = (await bridge.listTasks()).find(t => t.id === task.id)!;
+        await bridge.setWebOrigins({ taskId: task.id, origins: [...new Set([...(current.webOrigins ?? []), origin])] }); setUrl('');
+      } });
     }); }}><label className="sr-only" htmlFor="web-origin">授权站点 URL</label><input id="web-origin" type="url" required value={url} placeholder="https://docs.example.com" onChange={e => setUrl(e.target.value)} /><button className="secondary small-button" disabled={busy}>授权站点</button></form>
     {(task.webOrigins ?? []).map(origin => <div className="queue-row" key={origin}><p>{origin}</p><button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.setWebOrigins({ taskId: task.id, origins: task.webOrigins!.filter(item => item !== origin) }))}>撤销访问</button></div>)}
   </details>;

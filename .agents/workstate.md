@@ -1,14 +1,11 @@
 # Current workstate
 
-- Focus: tools/skills-first increment; bills, prices and budget-management products removed from scope by the owner.
-- Baseline: self-reviewed PR #1 merged into master `594e6e4`; final head `331434d` passed all four cross-platform/preview checks.
-- Branch: `feat/compact-workbench-queue-skills`, stacked on PR #2 (`fff93ec`), not merged to master.
-- Implementation: all conversation/tools/skills features plus simplified project authorization, automatic write-before snapshots, nested write/makeDirectory, UI restore, visible settings and scoped host trust. Existing tasks remain manual until explicitly changed.
-- Verified: corrective real Electron + DeepSeek batch files/directories with Shell disabled and zero approval clicks; persisted UI undo after restart; visible host setting, actual Node/Shell under scoped trust and revoke/restart. Local unit/preview regression counts are recorded in the corrective delivery. Synthetic data only; native-picker stub, Linux test harness.
-- New increment: whole-run reverse-order file undo, conflict-aware progress/retry, default keep-all and explicit 7/30/90-day snapshot retention, protected cleanup with audit tombstones, visible stats.
-- Verified new increment: 72 unit tests, six UI scenarios, build/lint/isolation/design checks, real Electron + DeepSeek run undo after restart and retention cleanup of artificially aged disposable SQLite fixtures.
-- Current increment: compact DeepSeek-only workbench, viewport-bottom composer, persistent removable input queue, abort-model/safe-tool-boundary delivery, skill reviewed upgrades/unregister/immutable pins, authorized public HTTPS readWeb (not browser automation).
-- Verified current: 91 unit regressions, nine preview cases, real Electron + DeepSeek interruption/deletion/selective promotion/approval invalidation/default queue after actual Node tool, explicit skill update button/restart pins/new conversation/UI uninstall and actual HTTPS evidence/revoke; scripts report REAL_WORKBENCH_E2E_OK. Native picker only is stubbed, synthetic materials, Linux no-sandbox test harness.
-- Next: directly submit stacked PR and inspect CI; no PR #2 or new-feature merge assumed.
-- Limits: host execution is not OS sandboxed; no full browser/desktop automation, scheduler/MCP/multi-agent engine, binary skill assets/marketplace/archive GC, full session-tree/rewind or exact model tokenizer. No signed Windows/macOS release or real-model target-platform verification yet.
-- Credentials: opaque approved Vault transport for sandbox tests only. Never commit raw credentials.
+- Baseline: PR #2 and #3 self-reviewed and merged in dependency order; master `656ee54`.
+- Active branch: `feat/unified-decision-dock`, first increment of the approved Chinese decision-dock / split-workspace plan. Submit a PR; do not assume authorization to merge it.
+- Implemented: batch askUser choices/custom answers, progress/review/skip/cancel, persistent question and chat drafts, digest-bound idempotent replies, fixed-bottom tool/artifact approvals and explicit scoped trust. Keep default project snapshots and safe tool-boundary queue semantics.
+- DeepSeek integration: askUser schema must have an object root. Enforce legacy-versus-batch exclusivity in runtime validation; a root union was rejected by the actual provider.
+- Verified: real Electron + DeepSeek multi-question answers and restart, cancel, scope-approved artifact batch, visible trusted conversation followed by actual Node/Shell and global revoke; original real desktop approval/restart/read/save/denial/stop regression passed.
+- QA inventory: `docs/decision-dock-qa.md`; live harness: `scripts/e2e-decisions-live.mjs`. Use Node 22+, `xvfb-run` on headless Linux, approved opaque Vault transport for live tests.
+- Next increment: HTML/Markdown/code split viewer and tab workspace, then webpage capabilities in that workspace. None is implemented in this branch.
+- Limits: host execution has system-user rights, not an OS sandbox; snapshots do not cover Shell/JS or remote effects. No signed native release, Windows/macOS real-model acceptance, browser automation, scheduler/MCP/multi-agent engine, billing/prices or binary skill assets.
+- Secrets: never commit or print credentials. Synthetic test materials only; real-model evidence must stay distinct from preview/smoke fixtures.

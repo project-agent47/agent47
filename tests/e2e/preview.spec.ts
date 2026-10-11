@@ -138,8 +138,10 @@ test('snapshot retention defaults to keep-all and explicit cleanup is preview-sa
 test('docked composer queues, deletes and promotes messages without a timing selector', async ({ page }) => {
   await page.goto('/'); await page.locator('.task-row').first().click();
   await expect(page.getByLabel('消息发送方式')).toHaveCount(0);
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
   await page.getByLabel('继续对话', { exact: true }).fill('queued alpha'); await page.keyboard.press('Enter');
   await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('queued alpha');
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
   await page.getByLabel('继续对话', { exact: true }).fill('queued beta'); await page.keyboard.press('Enter');
   await expect(page.locator('.queue-row')).toHaveCount(2);
   await page.getByLabel('删除待发送消息：queued beta', { exact: true }).click();
@@ -160,6 +162,7 @@ test('docked composer queues, deletes and promotes messages without a timing sel
   expect(mobileDock!.y).toBeLessThan(812);
   await page.screenshot({ path: '.qa/workbench-queue-mobile.png', animations: 'disabled' });
   await page.getByRole('button', { name: '立即发送', exact: true }).click();
+  await page.getByRole('button', { name: '作废旧决定并立即发送', exact: true }).click();
   await expect(page.getByLabel('待发送消息', { exact: true })).toHaveCount(0);
   await expect(page.locator('.message.user').last()).toContainText('queued alpha');
 });
@@ -169,6 +172,7 @@ test('web origin permissions are explicit and revocable in the workbench', async
   await page.locator('.web-access summary').click();
   await page.getByLabel('授权站点 URL').fill('https://example.com');
   await page.getByRole('button', { name: '授权站点', exact: true }).click();
+  await page.getByRole('button', { name: '确认授权站点', exact: true }).click();
   await expect(page.locator('.web-access')).toContainText('https://example.com');
   await page.getByRole('button', { name: '撤销访问', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销访问', exact: true })).toHaveCount(0);
@@ -180,4 +184,46 @@ test('normal preview queue automatically joins at the response boundary, not onl
   await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('automatic queued requirement');
   await expect(page.getByText('队列已在示例响应边界合并发送。本预览不调用模型，也不执行工具。', { exact: true })).toBeVisible();
   await expect(page.getByLabel('待发送消息', { exact: true })).toHaveCount(0);
+});
+test('multi-question dock supports custom answers, multi-select, review, skip and one submit', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '体验多题选择与自定义回答' }).click();
+  await expect(page.getByLabel('回答 Agent 问题')).toBeVisible();
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveCount(0);
+  await page.getByLabel('自定义答案', { exact: true }).check();
+  await page.getByLabel('自定义回答：受众').fill('项目维护者');
+  await page.getByRole('button', { name: '下一题', exact: true }).click();
+  await page.getByLabel('实施计划', { exact: false }).check();
+  await page.getByLabel('验收测试', { exact: false }).check();
+  await page.getByRole('button', { name: '下一题', exact: true }).click();
+  await page.getByRole('button', { name: '跳过这道可选题', exact: true }).click();
+  await page.getByRole('button', { name: '下一题', exact: true }).click();
+  await expect(page.locator('.answer-review')).toContainText('项目维护者');
+  await expect(page.locator('.answer-review')).toContainText('跳过');
+  await page.screenshot({ path: '.qa/decisions-review-light.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '提交全部答案' }).click();
+  await expect(page.locator('.task-title .status')).toHaveText('已完成');
+  await expect(page.locator('.message.user').last()).toContainText('项目维护者');
+  await expect(page.getByLabel('继续对话', { exact: true })).toBeVisible();
+});
+test('question draft survives composer overlay, cancel and dense mobile/dark layouts', async ({ page }) => {
+  await page.goto('/'); await page.getByRole('button', { name: '体验多题选择与自定义回答' }).click();
+  await page.getByRole('radio', { name: '研发团队 强调技术与实现', exact: true }).check();
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('保留这个聊天草稿');
+  await page.getByRole('button', { name: '回到待回答／确认' }).click();
+  await expect(page.getByRole('radio', { name: '研发团队 强调技术与实现', exact: true })).toBeChecked();
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue('保留这个聊天草稿');
+  await page.getByRole('button', { name: '回到待回答／确认' }).click();
+  await page.getByLabel('切换深色模式').click();
+  await page.screenshot({ path: '.qa/decisions-question-dark.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 900, height: 650 });
+  await page.screenshot({ path: '.qa/decisions-question-minimum.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const footer = await page.locator('.decision-actions').boundingBox();
+  expect(footer!.y + footer!.height).toBeLessThanOrEqual(812);
+  await page.screenshot({ path: '.qa/decisions-question-mobile.png', animations: 'disabled' });
+  await page.getByRole('button', { name: '取消本次提问' }).click();
+  await expect(page.locator('.task-title .status')).toHaveText('已完成');
 });

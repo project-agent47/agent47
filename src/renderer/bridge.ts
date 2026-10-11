@@ -1,4 +1,11 @@
 import type { AgentBridge, TaskView, ProviderView, CreateInput } from '../shared/contracts';
+import { answerSummary, parseQuestions, validateAnswers } from '../shared/questions';
+
+const demoQuestions = parseQuestions({ questions: [
+  { id: 'audience', header: '受众', prompt: '这份报告面向谁？', type: 'single', options: [{ id: 'team', label: '研发团队', description: '强调技术与实现' }, { id: 'management', label: '管理层', description: '强调目标与风险' }] },
+  { id: 'topics', header: '内容', prompt: '你希望包含哪些内容？可以多选并补充。', type: 'multiple', options: [{ id: 'plan', label: '实施计划' }, { id: 'tests', label: '验收测试' }] },
+  { id: 'notes', header: '补充', prompt: '还有什么需要补充？这道题可以跳过。', type: 'text', required: false }
+] }).questions;
 
 const now = new Date().toISOString();
 const sampleContent = '# Agent47 桌面改造清单\n\n## 第一批闭环\n\n- 使用 AI SDK 接入真实模型\n- 用目标驱动的工具循环替代固定阶段\n- 仅允许读取明确授权的项目目录\n- 写入前展示完整成果内容，并确认权限\n- 记录任务检查点和可追溯的执行事件\n\n## 后续验收\n\nWindows / macOS 安装、系统密钥存储和原生自动化需要分别验证。\n';
@@ -40,6 +47,11 @@ const previewBridge: AgentBridge = {
       events: [{ id: crypto.randomUUID(), at, kind: 'user', text: input.goal }]
     };
     samples.unshift(task); emit();
+    if (input.goal.includes('多题演示')) {
+      task.status = 'awaiting_input'; task.steps = 1;
+      task.question = { id: crypto.randomUUID(), text: '多题交互示例', questions: clone(demoQuestions), revision: 1, digest: '0'.repeat(64), legacy: false };
+      emit(); return clone(task);
+    }
     timers.set(task.id, setTimeout(() => {
       if (task.status !== 'running') return;
       task.status = 'completed'; task.steps = 1;
@@ -60,7 +72,8 @@ const previewBridge: AgentBridge = {
   },
   sendMessage: async input => {
     const parent = samples.find(t => t.id === input.taskId)!;
-    if (['running', 'queued', 'awaiting_approval'].includes(parent.status)) {
+    parent.composerDraft = '';
+    if (['running', 'queued', 'awaiting_approval', 'awaiting_input'].includes(parent.status)) {
       parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode }); emit(); return clone(parent);
     }
     const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
@@ -74,9 +87,24 @@ const previewBridge: AgentBridge = {
     const item = task.queuedInput?.find(entry => entry.id === input.messageId);
     if (!item) throw new Error('消息已发送或删除。');
     task.queuedInput = task.queuedInput!.filter(entry => entry.id !== item.id);
-    if (input.action === 'send') { task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: item.text }); task.status = 'completed'; if (task.approval) task.approval.state = 'denied'; }
+    if (input.action === 'send') { task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: item.text }); task.status = 'completed'; task.question = undefined; if (task.approval) task.approval.state = 'denied'; }
     emit(); return clone(task);
   },
+  saveQuestionDraft: async input => {
+    const task = samples.find(t => t.id === input.taskId)!;
+    if (!task.question || task.question.id !== input.questionId || (task.question.draft?.version ?? 0) !== input.expectedVersion) throw new Error('请刷新问题草稿。');
+    const answers = validateAnswers(task.question.questions!, input.answers, false);
+    task.question.draft = { answers, step: input.step, version: input.expectedVersion + 1 }; emit(); return clone(task.question.draft);
+  },
+  respondQuestion: async input => {
+    const task = samples.find(t => t.id === input.taskId)!;
+    if (task.status !== 'awaiting_input' || task.question?.id !== input.questionId) throw new Error('本次提问已结束。');
+    const text = input.result === 'cancel' ? '用户取消本次提问。' : answerSummary(task.question.questions!, validateAnswers(task.question.questions!, input.answers));
+    task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text },
+      { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '这是结构化回答示例，未调用模型或授予额外权限。' });
+    task.question = undefined; task.status = 'completed'; emit(); return clone(task);
+  },
+  saveComposerDraft: async input => { const task = samples.find(t => t.id === input.taskId)!; task.composerDraft = input.text; emit(); },
   resolveUnknown: async () => {},
   listSkills: async () => [],
   previewSkill: async () => { throw new Error('预览不读取本机 skill 包，请在桌面应用中导入。'); },
@@ -99,6 +127,8 @@ const previewBridge: AgentBridge = {
     const task = samples.find(t => t.id === input.taskId)!;
     if (!task.approval || task.approval.state !== 'pending') throw new Error('此审批已结束。');
     task.approval.state = input.approve ? 'applied' : 'denied';
+    if (input.scope === 'files') task.fileMode = 'snapshot';
+    if (input.scope === 'host') task.hostMode = 'allow';
     task.status = 'completed';
     if (input.approve) task.artifacts.push({ id: task.approval.id, name: task.approval.name, content: task.approval.content, sha256: 'preview-only' });
     task.events.push({ id: crypto.randomUUID(), at: now, kind: 'assistant', text: input.approve ? '已将示例成果加入预览成果库。未写入任何真实文件。' : '已拒绝这次示例写入。没有创建文件。' }); emit();

@@ -16,6 +16,7 @@ import { SkillRegistry } from './skills';
 import { executeHost } from './host';
 import { FileSnapshots } from '../core/snapshots';
 import { readWeb, webOrigin } from './web';
+import { answerListSchema } from '../shared/questions';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const single = app.requestSingleInstanceLock();
@@ -96,8 +97,19 @@ async function boot(): Promise<void> {
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));
   handle('tasks:send', value => {
-    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['queue', 'steer', 'followup']), clientMessageId: idSchema }).strict().parse(value);
-    return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId);
+    const input = z.object({ taskId: idSchema, text: z.string().trim().min(1).max(12000), mode: z.enum(['queue', 'steer', 'followup']), clientMessageId: idSchema, instruction: z.boolean().optional() }).strict().parse(value);
+    return runtime.send(input.taskId, input.text, input.mode, input.clientMessageId, input.instruction);
+  });
+  const questionBinding = { taskId: idSchema, questionId: z.string().min(1).max(128), revision: z.number().int().positive(), digest: z.string().regex(/^[a-f0-9]{64}$/) };
+  handle('questions:draft', value => runtime.saveQuestionDraft(z.object({
+    ...questionBinding, answers: answerListSchema, step: z.number().int().min(0).max(6), expectedVersion: z.number().int().min(0)
+  }).strict().parse(value)));
+  handle('questions:reply', value => runtime.respondQuestion(z.object({
+    ...questionBinding, clientCommandId: idSchema, result: z.enum(['answers', 'cancel']), answers: answerListSchema
+  }).strict().parse(value)));
+  handle('composer:draft', value => {
+    const input = z.object({ taskId: idSchema, text: z.string().max(12000) }).strict().parse(value);
+    runtime.saveComposerDraft(input.taskId, input.text);
   });
   handle('tasks:queue', value => {
     const input = z.object({ taskId: idSchema, messageId: idSchema, action: z.enum(['delete', 'send']) }).strict().parse(value);
@@ -156,8 +168,8 @@ async function boot(): Promise<void> {
     executionWrite = operation.catch(() => {}); return operation;
   });
   handle('tasks:decide', value => {
-    const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean() }).strict().parse(value);
-    runtime.decide(input.taskId, input.approvalId, input.digest, input.approve);
+    const input = z.object({ taskId: idSchema, approvalId: z.string().min(1).max(128), digest: z.string().regex(/^[a-f0-9]{64}$/), approve: z.boolean(), scope: z.enum(['files', 'host']).optional(), reason: z.string().max(2000).optional() }).strict().parse(value);
+    runtime.decide(input.taskId, input.approvalId, input.digest, input.approve, input.scope, input.reason);
   });
   handle('folder:choose', async () => {
     const answer = await dialog.showOpenDialog(window!, {

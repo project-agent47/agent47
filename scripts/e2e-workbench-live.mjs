@@ -71,12 +71,16 @@ try {
   await page.evaluate(() => window.agent47.setExecutionSettings({ fileMode: 'ask' }));
   const paused = await create('For a coding artifact tool test, call writeArtifact to propose queue-test.md containing only a short Node cancellation checklist. Wait for approval; do not do anything else.');
   await until(async () => (await tasks()).find(t => t.id === paused.id)?.status === 'awaiting_approval', 'approval pause');
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
   await page.getByLabel('继续对话', { exact: true }).fill(`Instead of writing, reply only ${markers.queue}. Do not call tools.`); await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
   await page.getByLabel('继续对话', { exact: true }).fill(markers.deleted); await page.keyboard.press('Enter');
   await page.getByLabel(`删除待发送消息：${markers.deleted}`, { exact: true }).click();
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
   await page.getByLabel('继续对话', { exact: true }).fill(`For the subsequent coding queue test reply only ${markers.wait}. Do not call tools.`); await page.keyboard.press('Enter');
   await page.screenshot({ path: '.qa/workbench-queue-desktop.png', animations: 'disabled' });
   await page.locator('.queue-row').filter({ hasText: markers.queue }).getByRole('button', { name: '立即发送', exact: true }).click();
+  await page.getByRole('button', { name: '作废旧决定并立即发送', exact: true }).click();
   const changed = await completed(paused.id);
   const immediateReply = changed.events.findIndex(e => e.kind === 'assistant' && e.text.includes(markers.queue));
   const deferredReply = changed.events.findIndex(e => e.kind === 'assistant' && e.text.includes(markers.wait));
@@ -122,6 +126,7 @@ try {
   const web = await create('Node HTTPS reader coding integration test: do not call any tools yet. Reply READY so the user can authorize the origin.');
   await completed(web.id); await page.locator('.web-access summary').click();
   await page.getByLabel('授权站点 URL').fill('https://example.com'); await page.getByRole('button', { name: '授权站点', exact: true }).click();
+  await page.getByRole('button', { name: '确认授权站点', exact: true }).click();
   const read = await reply(web.id, 'Now call readWeb with https://example.com/ exactly once. State the actual page heading and one sentence supported by the returned text; no other tools.');
   const readDone = await completed(read.id);
   if (!readDone.events.some(e => e.kind === 'tool' && e.text.startsWith('readWeb ·')) || !contains(readDone, 'Example Domain')) throw new Error('Actual HTTPS/model chain failed');
