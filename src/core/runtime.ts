@@ -259,7 +259,11 @@ export class TaskRuntime {
                 if (task.status === 'cancelled') return;
                 task.approval = approval;
               }
-              catch (error) { this.toolResult(task, call, (error as Error).message, true); this.save(task); continue; }
+              catch (error) {
+                if (controller.signal.aborted || this.stopped) return;
+                task = this.store.get(id);
+                this.toolResult(task, call, (error as Error).message, true); this.save(task); continue;
+              }
               this.save(task);
             }
             const action = task.approval;
@@ -341,6 +345,7 @@ export class TaskRuntime {
               this.event(task, 'tool', `${call.toolName} · ${JSON.stringify(call.input)}`);
             } catch (error) {
               if (controller.signal.aborted || this.stopped) return;
+              task = this.store.get(id);
               this.toolResult(task, call, String((error as Error).message), true);
               this.event(task, 'tool', `${call.toolName}：请求被拒绝或未能读取。`);
             }
