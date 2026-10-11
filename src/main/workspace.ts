@@ -11,7 +11,7 @@ import { classifyDocument, documentHTML, validDocumentRequest } from '../shared/
 import { webOrigin } from './web';
 import { publicProxy } from './public-proxy';
 import { capturePageScript, pageMessage } from '../shared/web-capture';
-import { browserSnapshotScript, browserActionScript, browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput } from '../shared/browser-tools';
+import { browserSnapshotScript, browserActionScript, browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput, browserReadInput, browserWaitInput, browserTextScript, browserElementProbeScript } from '../shared/browser-tools';
 import { effectDigest } from '../core/effects';
 import type { Approval } from '../shared/contracts';
 import { validateMaterialSnapshot, type MaterialSnapshot } from '../core/materials';
@@ -31,6 +31,9 @@ type SavedTab = z.infer<typeof tabSchema>;
 const stateSchema = z.object({ tabs: z.array(tabSchema).max(10), activeId: z.string().uuid().optional(), width: z.number().int().min(280).max(1000), visible: z.boolean() }).strict();
 const sensitive = /(^\.|^(credentials?|secrets?|id_rsa|id_ed25519)(\.|$)|\.(pem|key|p12|pfx|db|sqlite|sqlite3)$)/i;
 const systemTypes = new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.rtf', '.odt', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
+class BrowserScriptTimeout extends Error {
+  constructor() { super('请检查页面：网页工具超时。'); }
+}
 
 export class Workspace {
   private state: z.infer<typeof stateSchema> = { tabs: [], width: 440, visible: false };
@@ -41,7 +44,7 @@ export class Workspace {
   private proxies = new Map<string, Awaited<ReturnType<typeof publicProxy>>>();
   private captures = new Map<string, PageCapture>();
   private browserGrants = new Map<string, { tabId: string; conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow'; generation: string }>();
-  private browserSnapshots = new Map<string, { id: string; conversationId: string; url: string; wcId: number; at: number; elements: Record<string, unknown>[] }>();
+  private browserSnapshots = new Map<string, { id: string; conversationId: string; url: string; wcId: number; at: number; elements: Record<string, unknown>[]; regions: Record<string, unknown>[] }>();
   constructor(private path: string, private store: TaskStore, private artifactRoot: string, private owner: () => BrowserWindow | undefined, private changed = () => {}) {}
   async start() {
     let text: string;
@@ -79,21 +82,66 @@ export class Workspace {
     if (!grant || !tab || tab.kind !== 'web' || tab.paused || webOrigin(tab.url!) !== grant.origin || interact && grant.mode === 'read') throw new Error('请在工作区为本次对话授权目标网页。');
     return { grant, tab };
   }
-  private browserWC(taskId: string, tabId: string, interact = false) {
+  private browserWC(taskId: string, tabId: string, interact = false, allowLoading = false) {
     const target = this.browserTarget(taskId, tabId, interact), wc = this.views.get(tabId)?.webContents;
-    if (!wc || wc.isDestroyed() || wc.isLoading() || wc.getURL().length > 2048 || webOrigin(wc.getURL()) !== target.grant.origin ||
+    if (!wc || wc.isDestroyed() || (!allowLoading && wc.isLoading()) || wc.getURL().length > 2048 || webOrigin(wc.getURL()) !== target.grant.origin ||
       this.state.activeId !== tabId || !this.state.visible) throw new Error('请激活目标网页并等待加载完成。');
     return { ...target, wc };
   }
-  private async browserScript(wc: Electron.WebContents, code: string) {
+  private async browserScript(wc: Electron.WebContents, code: string, signal?: AbortSignal, timeoutMs = 8000) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    try { return await Promise.race([wc.executeJavaScriptInIsolatedWorld(1002, [{ code }]), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('请检查页面：网页工具超时。')), 8000); })]); }
-    finally { clearTimeout(timer); }
+    let onAbort: (() => void) | undefined;
+    if (signal?.aborted) throw new Error('Cancelled');
+    try { return await Promise.race([wc.executeJavaScriptInIsolatedWorld(1002, [{ code }]), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new BrowserScriptTimeout()), timeoutMs);
+      if (signal) { onAbort = () => reject(new Error('Cancelled')); signal.addEventListener('abort', onAbort, { once: true }); }
+    })]); }
+    finally { clearTimeout(timer); if (signal && onAbort) signal.removeEventListener('abort', onAbort); }
   }
+  private async browserWait(taskId: string, input: unknown, signal: AbortSignal) {
+    const data = browserWaitInput.parse(input), first = this.browserWC(taskId, data.tabId, false, true);
+    if (data.condition.kind === 'url' && webOrigin(data.condition.url) !== first.grant.origin) throw new Error('跨站等待不继承授权。');
+    const started = performance.now(), deadline = started + data.timeoutMs;
+    const check = () => {
+      if (signal.aborted) throw new Error('Cancelled');
+      const now = this.browserWC(taskId, data.tabId, false, true);
+      if (now.wc !== first.wc || now.grant.generation !== first.grant.generation) throw new Error('网页或授权已变化。');
+      return now;
+    };
+    while (true) {
+      const { wc } = check(); let matched = false, timedOut = false;
+      if (!wc.isLoading()) {
+        if (data.condition.kind === 'loaded') matched = true;
+        else if (data.condition.kind === 'url') matched = wc.getURL() === data.condition.url;
+        else {
+          const beforeURL = wc.getURL(), beforeEpoch = this.pageEpoch.get(data.tabId) ?? 0;
+          try {
+            const value = await this.browserScript(wc, data.condition.kind === 'element' ? browserElementProbeScript(data.condition.name) : browserTextScript(), signal, Math.max(1, deadline - performance.now()));
+            check();
+            if (beforeURL === wc.getURL() && beforeEpoch === (this.pageEpoch.get(data.tabId) ?? 0) && !wc.isLoading())
+              matched = data.condition.kind === 'element' ? value === true : z.object({ content: z.string().max(64000) }).parse(value).content.includes(data.condition.text);
+          } catch (error) { check(); if (error instanceof BrowserScriptTimeout) timedOut = true; else throw error; }
+        }
+      }
+      check();
+      if (matched || timedOut || performance.now() >= deadline) return {
+        tabId: data.tabId, url: wc.getURL(), outcome: matched ? 'matched' : 'timed_out', condition: data.condition,
+        elapsedMs: Math.round(performance.now() - started), verifiedOutcome: false, untrusted: true,
+        coverage: 'Current main document only; bounded observation, not business success or proof of absence.', next: 'browserRead for fresh evidence and refs; never replay remote actions on timeout.'
+      };
+      await new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new Error('Cancelled')); };
+        const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, Math.max(1, Math.min(250, deadline - performance.now())));
+        signal.addEventListener('abort', abort, { once: true });
+      });
+    }
+  }
+  private pageEpoch = new Map<string, number>();
   async browserRead(taskId: string, name: string, input: unknown, signal: AbortSignal) {
     if (signal.aborted) throw new Error('Cancelled');
     if (name === 'browserTabs') { z.object({}).strict().parse(input); return this.browserTabs(taskId); }
-    const { tabId } = browserTabInput.parse(name === 'browserNavigate' ? { tabId: browserNavigationInput.parse(input).tabId } : name === 'browserScroll' ? { tabId: browserScrollInput.parse(input).tabId } : input);
+    if (name === 'browserWait') return this.browserWait(taskId, input, signal);
+    const { tabId } = browserTabInput.parse(name === 'browserNavigate' ? { tabId: browserNavigationInput.parse(input).tabId } : name === 'browserScroll' ? { tabId: browserScrollInput.parse(input).tabId } : name === 'browserRead' ? { tabId: browserReadInput.parse(input).tabId } : input);
     const target = this.browserTarget(taskId, tabId);
     if (name === 'browserActivate') { await this.update({ activeId: tabId, visible: true }); this.changed(); return { active: tabId, next: 'Wait for layout/loading, then browserRead.' }; }
     const { wc, grant } = this.browserWC(taskId, tabId);
@@ -111,16 +159,32 @@ export class Workspace {
       return { scrolled: deltaY, next: 'browserRead' };
     }
     if (name !== 'browserRead') throw new Error('Unknown browser tool');
-    const url = wc.getURL(), generation = target.grant.generation;
-    const body = z.object({ title: z.string().max(200), content: z.string().max(8000), truncated: z.boolean() }).parse(await this.browserScript(wc, capturePageScript));
-    const controls = z.object({ title: z.string().max(200), elements: z.array(z.record(z.string(), z.unknown())).max(60) }).parse(await this.browserScript(wc, browserSnapshotScript));
+    const data = browserReadInput.parse(input), url = wc.getURL(), generation = target.grant.generation, epoch = this.pageEpoch.get(tabId) ?? 0;
+    let region: Record<string, unknown> | undefined;
+    if (data.regionRef) {
+      const previous = this.browserSnapshots.get(tabId);
+      region = previous?.regions.find(r => r.ref === data.regionRef);
+      if (!previous || previous.id !== data.snapshotId || previous.conversationId !== this.conversation(taskId) ||
+        previous.wcId !== wc.id || previous.url !== url || Date.now() - previous.at > 120000 || !region) throw new Error('请重新读取：区域引用已过期或页面变化。');
+    }
+    // A failed/cancelled read may still update the isolated-world registry.
+    // Fence old refs before any async page program, not only on successful return.
+    this.browserSnapshots.delete(tabId);
+    const body = z.object({ title: z.string().max(200), content: z.string().max(64000), truncated: z.boolean() }).parse(await this.browserScript(wc, browserTextScript(region ? Number(data.regionRef!.slice(1)) : undefined, region), signal));
+    const contentDigest = sha256(JSON.stringify([url, region ?? 'document', body.content, body.truncated]));
+    if (data.expectedDigest && data.expectedDigest !== contentDigest) throw new Error('请从 offset 0 重新读取：正文版本已变化，不能拼接旧分页。');
+    const controls = z.object({ title: z.string().max(200), elements: z.array(z.record(z.string(), z.unknown())).max(60), regions: z.array(z.record(z.string(), z.unknown())).max(40).default([]) }).parse(await this.browserScript(wc, browserSnapshotScript, signal));
     let elementsTruncated = controls.elements.length === 60;
     while (JSON.stringify(controls.elements).length > 12000) { controls.elements.pop(); elementsTruncated = true; }
     const current = this.browserWC(taskId, tabId);
-    if (signal.aborted || current.grant.generation !== generation || current.wc !== wc || wc.getURL() !== url) throw new Error('请重新读取：网页或授权已变化。');
-    const snapshot = { id: randomUUID(), conversationId: this.conversation(taskId), url, wcId: wc.id, at: Date.now(), elements: controls.elements };
+    if (signal.aborted || current.grant.generation !== generation || current.wc !== wc || wc.getURL() !== url || epoch !== (this.pageEpoch.get(tabId) ?? 0)) throw new Error('请重新读取：网页或授权已变化。');
+    if (data.offset > body.content.length) throw new Error('Offset exceeds captured text; not proof of complete page.');
+    const snapshot = { id: randomUUID(), conversationId: this.conversation(taskId), url, wcId: wc.id, at: Date.now(), elements: controls.elements, regions: controls.regions };
     this.browserSnapshots.set(tabId, snapshot);
-    return { tabId, snapshotId: snapshot.id, url, title: body.title, content: body.content.slice(0, 4000), truncated: body.truncated || body.content.length > 4000, elements: controls.elements, elementsTruncated,
+    const end = Math.min(body.content.length, data.offset + data.limit), hasMore = end < body.content.length;
+    return { tabId, snapshotId: snapshot.id, url, title: body.title, content: body.content.slice(data.offset, end), contentDigest, offset: data.offset,
+      nextOffset: hasMore ? end : null, hasMore, capturedCharacters: body.content.length, captureTruncated: body.truncated, scope: region ?? 'document',
+      observedAt: new Date(snapshot.at).toISOString(), truncated: body.truncated || hasMore, elements: controls.elements, regions: controls.regions, elementsTruncated,
       coverage: 'Partial currently-rendered main-document text; excludes hidden, lazy, frame and shadow content. Not proof of complete page.', untrusted: true, valuesIncluded: false };
   }
   private browserBinding(taskId: string, input: unknown) {
@@ -346,6 +410,7 @@ export class Workspace {
   }
   hide() { this.layoutGeneration++; for (const view of this.views.values()) view.setVisible(false); }
   private destroy(id: string) {
+    this.pageEpoch.set(id, (this.pageEpoch.get(id) ?? 0) + 1);
     this.browserSnapshots.delete(id);
     for (const [key, grant] of this.browserGrants) if (grant.tabId === id) this.browserGrants.delete(key);
     this.proxies.get(id)?.close(); this.proxies.delete(id);
@@ -399,6 +464,7 @@ export class Workspace {
       wc.on('did-navigate', navigated); wc.on('did-navigate-in-page', navigated);
       wc.on('did-start-navigation', (_event, _url, _inPlace, isMain) => {
         if (isMain) {
+          this.pageEpoch.set(tab.id, (this.pageEpoch.get(tab.id) ?? 0) + 1);
           this.browserSnapshots.delete(tab.id);
           for (const [id, capture] of this.captures) if (capture.tabId === tab.id) this.captures.delete(id);
         }

@@ -696,6 +696,9 @@ export class TaskRuntime {
               let value: unknown;
               if (browserReadNames.has(call.toolName)) {
                 if (!this.services.browser) throw new Error('Browser tools unavailable');
+                if (call.toolName === 'browserWait') {
+                  this.event(task, 'system', '正在有界等待网页条件；可停止，等待结果不代表业务成功。'); this.save(task);
+                }
                 value = await this.services.browser.read(id, call.toolName, call.input, controller.signal);
               } else if (call.toolName === 'readWeb') {
                 const { url } = z.object({ url: z.string().url().max(2048) }).strict().parse(call.input);

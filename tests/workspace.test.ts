@@ -15,10 +15,10 @@ async function browserSetup() {
   const tab = (await workspace.openWeb('https://example.com/')).tabs[0];
   let url = tab.url!;
   const execute = vi.fn(async (_world: number, sources: { code: string }[]) => sources[0].code === browserSnapshotScript
-    ? { title: 'Unit', elements: [{ ref: 'e0', tag: 'button', role: '', name: 'Test', type: '', href: '', disabled: false, readOnly: false }] }
+    ? { title: 'Unit', elements: [{ ref: 'e0', tag: 'button', role: '', name: 'Test', type: '', href: '', disabled: false, readOnly: false }], regions: [{ ref: 'r0', tag: 'main', name: 'Article' }] }
     : sources[0].code.includes('dispatched: true') ? { dispatched: true, verifiedOutcome: false } : { title: 'Unit', content: 'UNTRUSTED_PAGE_EVIDENCE', truncated: false });
   const wc = { id: 24, getURL: () => url, isDestroyed: () => false, isLoading: () => false, executeJavaScriptInIsolatedWorld: execute, loadURL: async (next: string) => { url = next; } };
-  (workspace as unknown as { views: Map<string, unknown> }).views.set(tab.id, { webContents: wc });
+  (workspace as unknown as { views: Map<string, unknown> }).views.set(tab.id, { webContents: wc, setVisible: vi.fn() });
   return { taskId, tab, execute, wc, setURL: (next: string) => { url = next; } };
 }
 beforeEach(async () => {
@@ -63,6 +63,86 @@ it('readonly blocks interaction, same-origin navigation excludes cross-origin, a
   action.state = 'approved';
   expect(await workspace.browserExecute(taskId, action, new AbortController().signal)).toMatchObject({ dispatched: true, verifiedOutcome: false });
   expect(execute).toHaveBeenCalled(); expect(() => workspace.browserValidate(taskId, action)).toThrow('过期');
+});
+it('paginates bounded document text with digest checks, never silently combines versions', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const body = { title: 'Unit', content: 'a'.repeat(9000), truncated: false };
+  execute.mockImplementation(async (_w, sources) => sources[0].code === browserSnapshotScript ? { title: 'Unit', elements: [], regions: [] } : body);
+  const first = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id, limit: 500 }, new AbortController().signal) as { contentDigest: string };
+  expect(first).toMatchObject({ hasMore: true, nextOffset: 500, capturedCharacters: 9000, captureTruncated: false });
+  const second = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id, offset: 500, limit: 500, expectedDigest: first.contentDigest }, new AbortController().signal);
+  expect(second).toMatchObject({ offset: 500, nextOffset: 1000 });
+  body.content = 'b' + body.content.slice(1);
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id, offset: 1000, expectedDigest: first.contentDigest }, new AbortController().signal)).rejects.toThrow('版本');
+});
+it('regions require fresh conversation-bound snapshots and retain explicit scope', async () => {
+  const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const first = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as { snapshotId: string };
+  const focused = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id, snapshotId: first.snapshotId, regionRef: 'r0' }, new AbortController().signal);
+  expect(focused).toMatchObject({ scope: { ref: 'r0', name: 'Article' } });
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id, snapshotId: first.snapshotId, regionRef: 'r0' }, new AbortController().signal)).rejects.toThrow('区域');
+});
+it('wait observes text without resetting actionable refs or claiming business success', async () => {
+  const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'ask', tab.url!);
+  const first = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as { snapshotId: string };
+  const value = await workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'PAGE_EVIDENCE' } }, new AbortController().signal);
+  expect(value).toMatchObject({ outcome: 'matched', verifiedOutcome: false });
+  await expect(workspace.browserPrepare(taskId, { toolCallId: 'wait-click', toolName: 'browserClick', input: { tabId: tab.id, snapshotId: first.snapshotId, ref: 'e0' } })).resolves.toBeDefined();
+});
+it('wait timeout is a bounded observation result, not a tool failure or proof of absence', async () => {
+  const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const value = await workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 250 }, new AbortController().signal);
+  expect(value).toMatchObject({ outcome: 'timed_out', verifiedOutcome: false });
+});
+it('wait can observe delayed loading but rejects cross-origin URL conditions', async () => {
+  const { taskId, tab, wc } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  let loading = true; wc.isLoading = () => loading; setTimeout(() => { loading = false; }, 20);
+  const value = await workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'loaded' }, timeoutMs: 1000 }, new AbortController().signal);
+  expect(value).toMatchObject({ outcome: 'matched' });
+  await expect(workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'url', url: 'https://other.example/' } }, new AbortController().signal)).rejects.toThrow('跨站');
+});
+it('revoking grants during a wait cannot deliver observations', async () => {
+  const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const waiting = workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 1000 }, new AbortController().signal);
+  setTimeout(() => workspace.agentGrant(taskId, tab.id, 'deny', tab.url!), 20);
+  await expect(waiting).rejects.toThrow('授权');
+});
+it('stop cancels wait promptly even while a fixed page script is pending', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  execute.mockImplementation(() => new Promise(() => {}));
+  const controller = new AbortController(), start = Date.now();
+  const waiting = workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 15000 }, controller.signal);
+  setTimeout(() => controller.abort(), 20);
+  await expect(waiting).rejects.toThrow('Cancelled'); expect(Date.now() - start).toBeLessThan(1000);
+});
+it('a script deadline returns timed_out, never depends on fractional timer clock ordering', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  execute.mockImplementation(() => new Promise(() => {}));
+  const value = await workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 250 }, new AbortController().signal);
+  expect(value).toMatchObject({ outcome: 'timed_out', verifiedOutcome: false });
+});
+it('same URL navigation during extraction invalidates a read using document epoch', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const epochs = (workspace as unknown as { pageEpoch: Map<string, number> }).pageEpoch;
+  execute.mockImplementation(async (_w, sources) => {
+    if (sources[0].code === browserSnapshotScript) return { title: 'Unit', elements: [], regions: [] };
+    epochs.set(tab.id, (epochs.get(tab.id) ?? 0) + 1);
+    return { title: 'Unit', content: 'OLD', truncated: false };
+  });
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal)).rejects.toThrow('变化');
+});
+it('a failed new read revokes old action refs before a page registry can change', async () => {
+  const { taskId, tab, execute } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'ask', tab.url!);
+  const first = await workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal) as { snapshotId: string };
+  execute.mockRejectedValueOnce(new Error('Page script failed'));
+  await expect(workspace.browserRead(taskId, 'browserRead', { tabId: tab.id }, new AbortController().signal)).rejects.toThrow('Page script failed');
+  await expect(workspace.browserPrepare(taskId, { toolCallId: 'stale-after-failure', toolName: 'browserClick', input: { tabId: tab.id, snapshotId: first.snapshotId, ref: 'e0' } })).rejects.toThrow('过期');
+});
+it('switching away from target tab cancels wait rather than reading hidden tabs', async () => {
+  const { taskId, tab } = await browserSetup(); workspace.agentGrant(taskId, tab.id, 'read', tab.url!);
+  const waiting = workspace.browserRead(taskId, 'browserWait', { tabId: tab.id, condition: { kind: 'text', text: 'MISSING' }, timeoutMs: 1000 }, new AbortController().signal);
+  setTimeout(() => { void workspace.update({ visible: false }); }, 20);
+  await expect(waiting).rejects.toThrow('激活');
 });
 async function importFile(name: string, content: string | Buffer) {
   const path = join(root, name); await writeFile(path, content); picker.mockResolvedValue({ canceled: false, filePaths: [path] });

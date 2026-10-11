@@ -60,3 +60,22 @@ it('unknown remote effect does not auto-replay on restart', async () => {
   expect(JSON.stringify(store.get(task.id).messages)).toContain('this does not verify success');
   expect(JSON.stringify(store.get(task.id).messages)).not.toContain('Previous host execution');
 });
+it('routes wait as a read-only tool, records timeout honestly, and exposes waiting state before completion', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'a47-browser-wait-runtime-'))), store = new TaskStore(join(root, 'tasks.db'));
+  let step = 0, startedState = false;
+  const read = vi.fn(async (id: string, name: string) => {
+    startedState = store.get(id).events.some(e => e.kind === 'system' && e.text.includes('有界等待'));
+    expect(name).toBe('browserWait'); expect(store.get(id).effectStarted).toBeUndefined();
+    return { outcome: 'timed_out', verifiedOutcome: false };
+  });
+  const runtime = new TaskRuntime(store, async () => ++step === 1 ? {
+    text: '', calls: [{ toolCallId: 'wait-test', toolName: 'browserWait', input: { tabId: crypto.randomUUID(), condition: { kind: 'loaded' }, timeoutMs: 250 } }],
+    messages: [{ role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'wait-test', toolName: 'browserWait', input: {} }] }]
+  } : { text: 'Not observed', calls: [], messages: [{ role: 'assistant', content: 'Not observed' }] },
+  join(root, 'artifacts'), () => {}, { browser: { read, tabs: () => [], prepare: async () => { throw new Error('Must not approve wait'); }, validate: () => false, execute: async () => { throw new Error('Must not dispatch wait'); } } });
+  open.push({ runtime, store }); runtime.start(); const task = runtime.create('Wait', 'general');
+  await wait(() => store.get(task.id).status === 'completed');
+  expect(startedState).toBe(true); expect(read).toHaveBeenCalledOnce();
+  expect(store.get(task.id).progress).toMatchObject({ tools: 1, errors: 0 });
+  expect(JSON.stringify(store.get(task.id).messages)).toContain('timed_out');
+});
