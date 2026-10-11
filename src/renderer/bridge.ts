@@ -45,8 +45,11 @@ const previewBridge: AgentBridge = {
       task.status = 'completed'; task.steps = 1;
       task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant',
         text: '这是交互预览，没有调用模型或读取文件。\n\n桌面应用会把你的目标交给已配置的模型，由模型选择必要的工具。当提出写入成果时，应用会暂停并展示完整内容，等待你的确认。你可以打开左侧待审阅的示例任务，体验完整审批流程。' });
+      for (const input of task.queuedInput ?? []) task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text });
+      if (task.queuedInput?.length) task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '队列已在示例响应边界合并发送。本预览不调用模型，也不执行工具。' });
+      task.queuedInput = [];
       timers.delete(task.id); emit();
-    }, 1200));
+    }, 3000));
     return clone(task);
   },
   cancelTask: async id => {

@@ -49,7 +49,8 @@ async function reply(parent, text) {
 async function importSkill(update = false) {
   await page.getByRole('button', { name: '能力与边界', exact: true }).click();
   await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, source);
-  await page.getByRole('button', { name: '选择 Skill 包', exact: true }).click();
+  if (update) await page.locator('.skill-entry').getByRole('button', { name: '更新', exact: true }).click();
+  else await page.getByRole('button', { name: '选择 Skill 包', exact: true }).click();
   await expect(page.getByText(`${update ? '审阅更新' : '审阅导入'}：workbench-test`, { exact: true })).toBeVisible();
   await page.getByRole('button', { name: update ? '更新为停用包' : '导入为停用包', exact: true }).click();
   await page.locator('.skill-entry').getByRole('button', { name: '启用', exact: true }).click();

@@ -173,3 +173,11 @@ test('web origin permissions are explicit and revocable in the workbench', async
   await page.getByRole('button', { name: '撤销访问', exact: true }).click();
   await expect(page.getByRole('button', { name: '撤销访问', exact: true })).toHaveCount(0);
 });
+test('normal preview queue automatically joins at the response boundary, not only through immediate-send', async ({ page }) => {
+  await page.goto('/'); await page.getByLabel('任务目标').fill('preview automatic queue');
+  await page.getByLabel('开始任务', { exact: true }).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('automatic queued requirement'); await page.keyboard.press('Enter');
+  await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('automatic queued requirement');
+  await expect(page.getByText('队列已在示例响应边界合并发送。本预览不调用模型，也不执行工具。', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('待发送消息', { exact: true })).toHaveCount(0);
+});
