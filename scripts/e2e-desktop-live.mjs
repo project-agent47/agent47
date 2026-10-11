@@ -29,6 +29,7 @@ async function launch() {
   if (actual !== data) throw new Error('Electron userData isolation mismatch');
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, project);
   await page.getByLabel('任务目标').waitFor();
+  await page.evaluate(() => window.agent47.setExecutionSettings({ hostExecution: false, fileMode: 'ask' }));
   const metadata = await page.evaluate(() => window.agent47.provider());
   if (!metadata.configured || 'apiKey' in metadata || 'encryptedKey' in metadata) throw new Error('Live connection/credential boundary invalid');
 }

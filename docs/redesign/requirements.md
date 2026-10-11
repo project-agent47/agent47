@@ -1,5 +1,7 @@
 # Desktop task agent: first increment
 
+Historical initial scope. The current owner-approved direction and implemented follow-up are in `conversation-tools-skills.md`; billing, prices and monetary/token-budget product controls are not in the current scope. Only supplier-reported token usage is retained.
+
 ## Confirmed direction
 
 The owner authorized local-first, single-user Electron development for Windows and macOS, a complete UI rebuild, replacement of problematic rigid workflows, and AI SDK model integration. The latest decision narrows the supported model family to DeepSeek, with OpenCode Go as the chosen economical route, and authorizes merge after real Agentic acceptance. The existing private repository remains the source of truth. The reference process is `kimmywork/skills`; use its increment, worklog and evidence-based verification practices, not a wholesale copy of its shell workflow engine.
@@ -11,7 +13,7 @@ The owner authorized local-first, single-user Electron development for Windows a
 - Native folder picker grants bounded text reads. Model requests transmit selected text to the user-configured service.
 - App-owned artifact writes only, with one approval per exact payload.
 - SQLite checkpoints and restart recovery in one desktop process. Serial queue, not a distributed coordinator.
-- AI SDK compatible provider. OpenCode Go configuration is a verified development target, not assumed licensing for all future assistant traffic.
+- AI SDK compatible provider, DeepSeek-only through the owner's chosen route.
 - Preserve the original Decision Workspace source/tests in `legacy/decision-workspace`. Exclude it from active root build and packaging.
 - No Windows/macOS desktop automation, browser tools, Shell, scheduler, MCP or multi-agent execution in this increment.
 

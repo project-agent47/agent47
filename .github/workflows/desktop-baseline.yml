@@ -22,6 +22,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run design:check
+      - run: npm run smoke:electron
+        if: runner.os != 'Linux'
       - run: npm audit --omit=dev
   preview:
     runs-on: ubuntu-latest
