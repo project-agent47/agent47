@@ -35,8 +35,9 @@ Native fixture injects SDK-shaped intents into temporary test SQLite and uses fi
 
 - 130 unit tests, build/typecheck/lint/design check passed; full npm audit0.
 - Native browser tool fixture passed9 groups, including request/open, scope upgrade invalidation and revocation; original local viewer6 groups, web context6 groups and Electron isolation smoke passed.
-- Real public Pi + DeepSeek:5 model steps, verified2026-10-11T09:23:17.303Z; no model/web/IPC fixtures or intent injection. Initial page content was lazy; Agent scrolled and read again.
-- Real DeepSeek controlled-page interaction:6 model steps, verified2026-10-11T09:23:37.766Z; SDK calls, main broker, actual DOM, IPC/runtime/SQLite real, only HTTPS page response fixture. Random result appeared only after actual DOM click.
+- Real public Pi + DeepSeek:5 model steps, verified2026-10-11T09:37:16.682Z; no model/web/IPC fixtures or intent injection. Initial page content was lazy; Agent scrolled and read again.
+- Real DeepSeek controlled-page interaction:6 model steps, verified2026-10-11T09:37:32.615Z; SDK calls, main broker, actual DOM, IPC/runtime/SQLite real, only HTTPS page response fixture. Random result appeared only after actual DOM click.
 - Failed initial dynamic-tool-catalog acceptance and first-read-only test assertion are not counted as passes. Stable browser catalog fixed stale model inference; public evidence assertion checks all actual reads rather than assuming first loaded content contains lazy page sections.
 - Preview desktop light/dark and375px dark grant dock inspected; no horizontal page overflow, confirm action within viewport.
 - Superseded Windows CI failed in the original web-context fixture because it clicked capture after URL/visibility but before load completion; app correctly refused. Fixture now waits isLoading=false, including refresh. No application security check was relaxed; verify final head CI separately.
+- The public-page harness checks title/URL and ordered actual DOM words, allowing opacity-zero navigation that the fixed reader excludes but innerText includes. Earlier fixed-phrase/contiguous-prefix assertion failures were not counted as passes; actual returned page evidence was inspected before correcting the harness.

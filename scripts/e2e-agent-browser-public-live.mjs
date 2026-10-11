@@ -29,8 +29,16 @@ try {
     const view = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL() === 'https://pi.dev/');
     return view?.webContents.executeJavaScript('document.body.innerText');
   });
-  const normalize = value => value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-  if (!evidence?.content?.trim() || evidence.url !== 'https://pi.dev/' || !actualDOM || !normalize(actualDOM).includes(normalize(evidence.content).slice(0, 80))) throw new Error('Actual Pi DOM did not reach model');
+  // innerText includes opacity-zero navigation that our reader excludes.
+  // Match the first40 captured words in order, allowing excluded DOM blocks.
+  const words = value => value.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const expected = words(evidence?.content ?? '').slice(0, 40);
+  let matched = 0;
+  for (const word of words(actualDOM ?? '')) if (word === expected[matched]) matched++;
+  if (expected.length < 8 || matched !== expected.length || evidence?.title !== 'Pi' || evidence.url !== 'https://pi.dev/') {
+    await writeFile('.qa/agent-browser-public-assertion.json', JSON.stringify({ evidence: evidence?.content, actualDOM }, null, 2));
+    throw new Error('Actual Pi DOM did not reach model');
+  }
   await page.screenshot({ path: '.qa/agent-browser-public-conversation.png' });
   await writeFile('.qa/agent-browser-public-results.json', JSON.stringify({ result: 'REAL_PUBLIC_DEEPSEEK_BROWSER_OK', modelFixture: false, webFixture: false, ipcFixture: false, intentInjection: false, url: evidence.url, steps: task.steps, usage: task.usage, platform: process.platform, verifiedAt: new Date().toISOString() }, null, 2));
   console.log('REAL_PUBLIC_DEEPSEEK_BROWSER_OK steps=' + task.steps);
