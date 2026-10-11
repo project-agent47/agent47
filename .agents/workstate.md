@@ -1,7 +1,8 @@
 # Current workstate
 
-- Master baseline 9ca52f4: owner-authorized review/merge of PR #9 completed after repeated build/lint,150 unit and native pause fixture.
-- Owner approved recommended next B1 increment. Active branch feat/browser-bounded-observation; submit a PR, do not automatically merge this new increment.
+- Master eaa799a: owner-authorized self-review and merge of PR #10 complete; exact master workflow38148802252 succeeded.
+- Active C1 branch feat/selection-versioned-file-edit; owner approved selection references, edits and diff, with Harness-informed stable fileEdit. Submit an independent PR, do not merge this new increment automatically.
+- C1: project-authorized raw-version selections into the existing composer without implicit sending; external/library references do not grant writing. Structured original-hash multi-hunk fileEdit with exact offsets, no fuzzy guesses; legacy editFile retained. Readonly recorded before/after Monaco diff uses automatic snapshots. See docs/selection-versioned-file-edit.md and scripts/e2e-selection-native.mjs for contracts and evidence limits.
 - A1: stable first-turn conversation title, latest-run sidebar, run history and explicit latest dock; versioned material references from first prompt, native single-file picker and saved workspace text/artifacts.
 - Bodies/pointers in main-owned checkpoints only. Model metadata only for sent versions, bounded readMaterial with immutable hash/byte validation, queue-bound versions, explicit source checks/refresh; selection/viewing is not model context and grants no parent directory.
 - Old checkpoints migrate titles additively; completed runs never replay. Material snapshots and sent-message links persist across rounds/restarts; new-task unsubmitted tickets expire10min/restart. 1MB/version,10selected,5MB version archive cap.

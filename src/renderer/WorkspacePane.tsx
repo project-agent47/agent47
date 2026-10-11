@@ -10,12 +10,15 @@ class DocumentBoundary extends Component<{ children: ReactNode; content: string 
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? <div className="document-markdown"><p>编辑器加载失败，暂以纯文本查看。关闭后重新打开可重试。</p><pre>{this.props.content}</pre></div> : this.props.children; }
 }
-export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage, attachMaterial }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
-  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void; attachMaterial: (tabId: string) => void }) {
+export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage, attachMaterial, selectText, canSelect }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
+  run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void; attachMaterial: (tabId: string) => void;
+  canSelect: boolean; selectText: (tabId: string, hash: string, range: { start: number; end: number }) => Promise<void> }) {
   const tab = state.tabs.find(t => t.id === state.activeId), box = useRef<HTMLDivElement>(null);
   const [raw, setRaw] = useState(false), [draftWidth, setDraftWidth] = useState(state.width);
   const [url, setURL] = useState('');
+  const [range, setRange] = useState<{ start: number; end: number }>(), [selectionHint, setSelectionHint] = useState('');
   useEffect(() => { setRaw(false); }, [tab?.id]);
+  useEffect(() => { setRange(undefined); setSelectionHint(''); }, [tab?.id, tab?.sha256, raw]);
   useEffect(() => { setDraftWidth(state.width); }, [state.width]);
   useEffect(() => {
     let disposed = false, frame = 0;
@@ -50,11 +53,11 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
       <button role="tab" aria-selected={tab?.id === t.id} title={t.name} onClick={() => mutate({ activeId: t.id })}>{t.name}</button>
       <button className="icon-button" aria-label={`关闭标签：${t.name}`} onClick={() => mutate({ closeId: t.id })}><X size={12} /></button></div>)}</div>
     {tab ? <>
-      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
+      <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : tab.source === 'diff' ? '历史差异' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
         {['html', 'markdown'].includes(tab.kind) && <button className="text-button" onClick={() => setRaw(!raw)}>{raw ? '查看渲染' : '查看源码'}</button>}
         {['html', 'web'].includes(tab.kind) && <button className="text-button" disabled={tab.paused} onClick={() => mutate({ pauseId: tab.id })}>{tab.paused ? '已停止，刷新恢复' : tab.kind === 'web' ? '停止网页' : '停止 HTML 运行'}</button>}
         {tab.kind === 'web' && <button className="text-button" aria-label="将页面内容交给 Agent" disabled={!canSendPage || !!tab.paused || blocked} onClick={() => sendPage(tab.id)}>发送页面摘录</button>}
-        <button className="icon-button" aria-label="刷新当前文档" onClick={() => void run(async () => setState(await bridge.workspaceRefresh(tab.id)))}><RefreshCw size={14} /></button>
+        {tab.kind !== 'diff' && <button className="icon-button" aria-label="刷新当前文档" onClick={() => void run(async () => setState(await bridge.workspaceRefresh(tab.id)))}><RefreshCw size={14} /></button>}
         <button className="icon-button" aria-label="标签左移" onClick={() => mutate({ moveId: tab.id, direction: -1 })}><ArrowLeft size={14} /></button>
         <button className="icon-button" aria-label="标签右移" onClick={() => mutate({ moveId: tab.id, direction: 1 })}><ArrowRight size={14} /></button></div>
       {tab.kind === 'html' && !raw && <p className="workspace-note">离线隔离渲染；外网、相对资源、弹窗与表单提交不开放。{bridge.preview && '预览关闭脚本。'}</p>}
@@ -64,15 +67,25 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
         </select></label>
         <span> · 本次对话／此 Tab／此站点，重启失效。</span>{!canSendPage && '选择对话并完成当前决定后可发送摘录。'}</div>}
       <div className="workspace-body" ref={box}>
-        {raw || tab.kind === 'code' ? <DocumentBoundary key={`${tab.id}:${tab.sha256}`} content={tab.content ?? ''}><Suspense fallback={<p className="workspace-note">正在加载只读编辑器…</p>}><CodeViewer content={tab.content ?? ''} name={tab.name} theme={theme} /></Suspense></DocumentBoundary>
-          : tab.kind === 'markdown' ? <div className="document-markdown"><Markdown>{tab.content ?? ''}</Markdown></div>
+        {raw || tab.kind === 'code' || tab.kind === 'diff' ? <DocumentBoundary key={`${tab.id}:${tab.sha256}`} content={tab.content ?? ''}><Suspense fallback={<p className="workspace-note">正在加载只读编辑器…</p>}><CodeViewer content={tab.content ?? ''} name={tab.name} theme={theme} before={tab.kind === 'diff' ? tab.before : undefined} onSelection={['markdown', 'code'].includes(tab.kind) && ['file', 'artifact'].includes(tab.source) ? setRange : undefined} /></Suspense></DocumentBoundary>
+          : tab.kind === 'markdown' ? <div className="document-markdown" onMouseUp={event => {
+            if (!['file', 'artifact'].includes(tab.source)) return;
+            const selection = window.getSelection(), selected = selection?.toString(), domRange = selection?.rangeCount ? selection.getRangeAt(0) : undefined;
+            if (!selected || !domRange || !event.currentTarget.contains(domRange.startContainer) || !event.currentTarget.contains(domRange.endContainer)) { setRange(undefined); return; }
+            const content = tab.content ?? '', first = content.indexOf(selected);
+            if (first < 0 || content.indexOf(selected, first + 1) >= 0) { setRange(undefined); setSelectionHint('跨格式或重复文本，请切换源码精确选区。'); return; }
+            setSelectionHint(''); setRange({ start: first, end: first + selected.length });
+          }}><Markdown>{tab.content ?? ''}</Markdown></div>
           : tab.kind === 'web' ? <p className="workspace-note">{tab.paused ? '网页已暂停；刷新会重新联网加载。' : bridge.preview ? '网页示例，不访问该地址；桌面应用在独立原生会话中浏览。' : '网页在独立原生会话中加载，应用 IPC 不进入网页。'}</p>
           : tab.kind === 'html' ? tab.paused ? <p className="workspace-note">页面已停止，点击刷新重新加载。不会重放 Agent 工具。</p> : bridge.preview ? <iframe title={`HTML 预览：${tab.name}`} sandbox="" srcDoc={'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'">' + tab.content} /> : <p className="workspace-note">隔离页面加载中；应用 IPC 不进入该页面。</p>
           : <div className="unsupported-document"><h3>暂不支持此格式</h3><p>{tab.name} 可以在系统默认查看器打开；不会解析或自动发送给模型。</p></div>}
       </div>
+      {['markdown', 'code'].includes(tab.kind) && ['file', 'artifact'].includes(tab.source) && <div className="selection-toolbar" aria-label="文档选区修改"><span>{selectionHint || (range ? `选区 ${range.start}–${range.end} · ${range.end - range.start} 字符` : '选择文字或代码，再引用到输入区')}<small>发送后才入模 · 不扩大写权限</small></span>
+        <button className="secondary small-button" disabled={!range || range.end - range.start > 12000 || !canSelect || blocked} onClick={() => { if (range) void run(async () => { await selectText(tab.id, tab.sha256, range); setRange(undefined); setSelectionHint('已引用选区；在下方填写修改要求后发送。'); }); }}>让 Agent 修改</button></div>}
+      {tab.kind === 'diff' && <p className="workspace-note">{tab.beforeHash?.slice(0, 8)} → {tab.sha256.slice(0, 8)} · {tab.status}。只读文本差异统一显示LF，隐藏文件头BOM；不自动入模。标签是独立查看快照，备份清理不删除它，关闭可移除。</p>}
       <footer className="workspace-footer">{tab.taskId && <button className="text-button" onClick={() => sourceTask(tab.taskId!)}>查看来源任务</button>}
         {['file', 'artifact'].includes(tab.source) && tab.kind !== 'unsupported' && <button className="text-button" disabled={!canSendPage || blocked} onClick={() => attachMaterial(tab.id)}>引用到当前对话</button>}
-        {tab.kind !== 'web' && <button className="secondary small-button" disabled={tab.source === 'proposal'} onClick={() => void run(async () => {
+        {!['web', 'diff'].includes(tab.kind) && <button className="secondary small-button" disabled={tab.source === 'proposal'} onClick={() => void run(async () => {
           if (bridge.preview) { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([tab.content ?? ''])); a.download = tab.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); }
           else await bridge.workspaceSystemOpen(tab.id);
         })}>{bridge.preview ? '下载示例文件' : '用系统默认查看器打开'}</button>}</footer>

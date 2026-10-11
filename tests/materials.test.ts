@@ -55,6 +55,21 @@ it('selection does not authorize a tool until a sent message; followup keeps tit
   expect(store.get(next.id).authorizedMaterialIds).toEqual([m.id]);
   expect(readMaterial(store.get(next.id).materialSnapshots!, [m.id], { id: m.id }).content).toBe(m.content);
 });
+it('selected ranges deduplicate by range, remain unsent until explicit send, and survive context metadata', async () => {
+  const seen: unknown[] = [];
+  const { runtime, store } = await setup(async (_messages, _id, _signal, _skill, context) => { seen.push(context?.materials); return { text: 'done', calls: [], messages: [{ role: 'assistant', content: 'done' }] }; });
+  const first = runtime.create('Select', 'general'); await wait(() => runtime.list()[0].status === 'completed');
+  const m = material('first second'); m.selection = { start: 0, end: 5, targetPath: 'notes.md' };
+  runtime.attachMaterial(first.id, m);
+  const second = { ...m, id: randomUUID(), selection: { start: 6, end: 12 } }; runtime.attachMaterial(first.id, second);
+  expect(store.get(first.id).materials).toHaveLength(2); expect(seen).toHaveLength(1);
+  expect(store.get(first.id).authorizedMaterialIds).toEqual([]);
+  const next = runtime.send(first.id, 'Modify selected range', 'followup', randomUUID(), false, [m.id]);
+  await wait(() => store.get(next.id).status === 'completed');
+  expect(seen.at(-1)).toEqual([expect.objectContaining({ id: m.id, selection: m.selection })]);
+  expect(materialMessage('modify', [m])).toContain('"targetPath":"notes.md"');
+  expect(materialMessage('modify', [second])).not.toContain('"targetPath":');
+});
 it('queued material versions survive removal and restart without silently replacing evidence', async () => {
   let release!: () => void; const blocked = new Promise<void>(r => { release = r; });
   const { runtime, store } = await setup(async () => { await blocked; return { text: 'done', calls: [], messages: [{ role: 'assistant', content: 'done' }] }; });

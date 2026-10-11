@@ -7,6 +7,7 @@ import { TaskStore } from '../src/core/store';
 const { picker, opener } = vi.hoisted(() => ({ picker: vi.fn(), opener: vi.fn().mockResolvedValue('') }));
 vi.mock('electron', () => ({ BrowserWindow: class {}, WebContentsView: class {}, session: {}, dialog: { showOpenDialog: picker }, shell: { openPath: opener } }));
 import { Workspace } from '../src/main/workspace';
+import { artifactPath, sha256 } from '../src/core/tools';
 import { browserSnapshotScript } from '../src/shared/browser-tools';
 let root: string, store: TaskStore, workspace: Workspace;
 async function browserSetup() {
@@ -148,6 +149,46 @@ async function importFile(name: string, content: string | Buffer) {
   const path = join(root, name); await writeFile(path, content); picker.mockResolvedValue({ canceled: false, filePaths: [path] });
   return workspace.importFile();
 }
+it('selection binds an exact saved version and only maps targets inside the authorized project', async () => {
+  const content = 'first\nsecond', state = await importFile('selection.md', content), tab = state.tabs[0], taskId = randomUUID(), at = new Date().toISOString();
+  store.save({ id: taskId, goal: 'Edit', root, skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [], messages: [], pending: [] });
+  const selected = await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 6, 12);
+  expect(selected.selection).toEqual({ start: 6, end: 12, targetPath: 'selection.md' });
+  const task = store.get(taskId); task.root = undefined; store.save(task);
+  expect((await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 6, 12)).selection).toEqual({ start: 6, end: 12 });
+  await writeFile(join(root, 'selection.md'), 'external');
+  await expect(workspace.selectionMaterial(taskId, tab.id, tab.sha256, 6, 12)).rejects.toThrow('刷新');
+});
+it('selection refuses stale hashes/ranges and cannot migrate automatically to changed source', async () => {
+  const state = await importFile('selection.md', 'first\nsecond'), tab = state.tabs[0], taskId = randomUUID(), at = new Date().toISOString();
+  store.save({ id: taskId, goal: 'Edit', skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [], messages: [], pending: [] });
+  await expect(workspace.selectionMaterial(taskId, tab.id, '0'.repeat(64), 0, 5)).rejects.toThrow('重新选择');
+  await expect(workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 50)).rejects.toThrow('选区');
+  const selected = await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5);
+  await expect(workspace.refreshMaterial(selected)).rejects.toThrow('重新选择');
+});
+it('library selections stay reference-only even if user project overlaps the artifact store', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString(), artifact = { id: 'saved-note', name: 'note.md', content: 'saved text', sha256: sha256('saved text') };
+  store.save({ id: taskId, goal: 'Library', root, skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [artifact], messages: [], pending: [] });
+  await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), artifact.content);
+  const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
+  expect((await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5)).selection).toEqual({ start: 0, end: 5 });
+});
+it('diff tabs persist both validated versions without paths, edit rights or system opening', async () => {
+  const taskId = randomUUID(), opened = await workspace.openDiff(taskId, { path: 'a.ts', before: 'old', after: 'new' });
+  expect(opened.tabs[0]).toMatchObject({ kind: 'diff', source: 'diff', before: 'old', content: 'new' });
+  const reopened = new Workspace(join(root, 'workspace.json'), store, '/unused', () => undefined); await reopened.start();
+  expect(reopened.view().tabs[0].before).toBe('old');
+  const otherTask = randomUUID(), separate = await workspace.openDiff(otherTask, { path: 'a.ts', before: 'old', after: 'new' });
+  expect(separate.tabs).toHaveLength(2);
+  expect(separate.tabs.find(t => t.id === separate.activeId)?.taskId).toBe(otherTask);
+  await expect(workspace.refresh(opened.activeId!)).rejects.toThrow('留档');
+  const incompletePath = join(root, 'incomplete.json'), incomplete = JSON.parse(await readFile(join(root, 'workspace.json'), 'utf8'));
+  delete incomplete.tabs[0].before; await writeFile(incompletePath, JSON.stringify(incomplete));
+  await expect(new Workspace(incompletePath, store, '/unused', () => undefined).start()).rejects.toThrow('Invalid recorded diff');
+  const path = join(root, 'workspace.json'), body = JSON.parse(await readFile(path, 'utf8')); body.tabs[0].before = 'corrupt'; await writeFile(path, JSON.stringify(body));
+  await expect(new Workspace(path, store, '/unused', () => undefined).start()).rejects.toThrow('integrity');
+});
 it('snapshots imported Markdown, redacts private paths and deduplicates the same version', async () => {
   const first = await importFile('a.md', '# old');
   expect(first.tabs[0]).toMatchObject({ name: 'a.md', content: '# old', source: 'file', kind: 'markdown' });

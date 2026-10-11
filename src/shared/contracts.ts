@@ -4,13 +4,13 @@ export interface ExecutionProgress { window: number; windowStart: number; window
 export type SkillId = 'general' | 'review' | 'deliver';
 export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string; materials?: MaterialView[] }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
-export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; sourceTaskId?: string; sourceArtifactId?: string }
+export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; sourceTaskId?: string; sourceArtifactId?: string; selection?: { start: number; end: number; targetPath?: string } }
 export interface Approval { id: string; name: string; content: string; digest: string; expiresAt: string; state: 'pending' | 'approved' | 'applied' | 'denied'; kind?: 'project_write' | 'directory' | 'shell' | 'code' | 'browser'; payload?: Record<string, unknown>; root?: string; before?: string; denialReason?: string }
 export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compaction'; state: 'pending' | 'reported' | 'partial' | 'unknown'; input?: number; output?: number; total?: number; cacheRead?: number; reasoning?: number; textDeltas?: number; reasoningDeltas?: number }
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
 export interface SkillImport { ticket: string; skill: SkillView; instructions: string; replaces?: string; resources?: Record<string, string> }
 export interface ExecutionSettings { hostExecution: boolean; fileMode?: 'snapshot' | 'ask' }
-export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored' }
+export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored'; kind?: 'project_write' | 'directory' }
 export interface RunUndo { state: 'running' | 'completed' | 'partial'; restored: number; conflicts: { path: string; error: string }[]; startedAt: string }
 export interface SnapshotSettings { retentionDays: 0 | 7 | 30 | 90; count: number; bytes: number; storagePath: string }
 export interface QuestionItem {
@@ -52,6 +52,8 @@ export interface ProviderView { baseURL: string; model: string; configured: bool
 export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[] }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  selectWorkspace(input: { taskId: string; tabId: string; expectedHash: string; start: number; end: number }): Promise<TaskView>;
+  openFileDiff(input: { taskId: string; snapshotId: string }): Promise<WorkspaceState>;
   lastRun(): Promise<string | undefined>;
   rememberRun(id?: string): Promise<void>;
   prepareMaterial(): Promise<{ ticket: string; material: MaterialView } | undefined>;
@@ -108,7 +110,7 @@ export interface AgentBridge {
   onChange(callback: () => void): () => void;
 }
 export type WorkspaceSource = { kind: 'artifact'; taskId: string; artifactId: string } | { kind: 'proposal'; taskId: string; approvalId: string; digest: string };
-export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported' | 'web'; content?: string; sha256: string; source: 'artifact' | 'proposal' | 'file' | 'web'; taskId?: string; status?: string; paused?: boolean; url?: string; revision?: number; agentGrants?: { conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow' }[] }
+export interface WorkspaceTab { id: string; name: string; kind: 'html' | 'markdown' | 'code' | 'unsupported' | 'web' | 'diff'; content?: string; before?: string; beforeHash?: string; sha256: string; source: 'artifact' | 'proposal' | 'file' | 'web' | 'diff'; taskId?: string; status?: string; paused?: boolean; url?: string; revision?: number; agentGrants?: { conversationId: string; origin: string; mode: 'read' | 'ask' | 'allow' }[] }
 export interface PageCapture { id: string; tabId: string; taskId: string; url: string; title: string; content: string; capturedAt: string; digest: string; truncated: boolean }
 export interface WorkspaceState { tabs: WorkspaceTab[]; activeId?: string; width: number; visible: boolean }
 declare global { interface Window { agent47?: AgentBridge } }

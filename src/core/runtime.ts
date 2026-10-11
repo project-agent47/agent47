@@ -13,7 +13,7 @@ import type { FileSnapshots } from './snapshots';
 import { relative, isAbsolute, sep, resolve } from 'node:path';
 import { browserReadNames, browserEffectNames } from '../shared/browser-tools';
 import type { Approval } from '../shared/contracts';
-import { materialMessage, readMaterial, type MaterialSnapshot } from './materials';
+import { materialMessage, readMaterial, validateMaterialSnapshot, type MaterialSnapshot } from './materials';
 import { inputKey, recordObservation } from './progress';
 
 export interface RuntimeServices {
@@ -126,15 +126,15 @@ export class TaskRuntime {
   attachMaterial(id: string, material: MaterialSnapshot, replaceId?: string): TaskView {
     const task = this.store.get(id);
     if (this.list().find(t => t.id === id)?.latestRunId !== id) throw new Error('请回到当前轮次引用材料。');
-    if (material.sha256 !== sha256(material.content) || material.bytes !== Buffer.byteLength(material.content)) throw new Error('请重新选择材料：版本校验失败。');
-    const existing = task.materials?.find(m => m.sha256 === material.sha256 && m.name === material.name && task.materialSnapshots?.[m.id]?.path === material.path && m.sourceTaskId === material.sourceTaskId);
+    validateMaterialSnapshot(material);
+    const existing = task.materials?.find(m => m.sha256 === material.sha256 && m.name === material.name && task.materialSnapshots?.[m.id]?.path === material.path && m.sourceTaskId === material.sourceTaskId && JSON.stringify(m.selection) === JSON.stringify(material.selection));
     if (existing) return publicTask(task);
     if (replaceId && !task.materials?.some(m => m.id === replaceId)) throw new Error('请重新选择材料。');
     if (!replaceId && (task.materials?.length ?? 0) >= 10) throw new Error('请先移除材料：最多选择 10 份。');
     if (Buffer.byteLength(material.content) > 1_000_000 || Object.values(task.materialSnapshots ?? {}).reduce((n, m) => n + m.bytes, 0) + material.bytes > 5_000_000)
       throw new Error('请使用较小材料：单份 1 MB，会话版本合计 5 MB。');
     task.materialSnapshots ??= {}; task.materialSnapshots[material.id] = material;
-    const view = { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source, sourceTaskId: material.sourceTaskId, sourceArtifactId: material.sourceArtifactId };
+    const view = { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source, sourceTaskId: material.sourceTaskId, sourceArtifactId: material.sourceArtifactId, selection: material.selection };
     task.materials = (task.materials ?? []).filter(m => m.id !== replaceId); task.materials.push(view); this.save(task); return publicTask(task);
   }
   removeMaterial(id: string, materialId: string): TaskView {
@@ -312,6 +312,11 @@ export class TaskRuntime {
   saveComposerDraft(id: string, text: string): void {
     if (text.length > 12000) throw new Error('Invalid composer draft');
     const task = this.store.get(id); task.composerDraft = text; this.save(task);
+  }
+  async fileDiff(id: string, snapshotId: string) {
+    const task = this.store.get(id);
+    if (!task.fileChanges?.some(c => c.id === snapshotId && c.state !== 'cleaned') || !this.services.snapshots) throw new Error('请使用本轮可查看的文件改动。');
+    return this.services.snapshots.diff(id, snapshotId);
   }
   async restoreFile(id: string, snapshotId: string): Promise<void> {
     const task = this.store.get(id);
@@ -505,7 +510,7 @@ export class TaskRuntime {
       browserTabs: this.services.browser?.tabs(task.id) ?? [],
       materials: (task.authorizedMaterialIds ?? []).map(id => {
         const m = task.materialSnapshots?.[id];
-        return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt } : undefined;
+        return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt, selection: m.selection } : undefined;
       }).filter(Boolean),
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
@@ -654,7 +659,7 @@ export class TaskRuntime {
               task = this.store.get(id); task.effectStarted = undefined;
               const change = value as { snapshotId?: string; path?: string };
               if (change?.snapshotId && !task.fileChanges?.some(item => item.id === change.snapshotId)) {
-                task.fileChanges ??= []; task.fileChanges.push({ id: change.snapshotId, path: change.path!, state: 'saved' });
+                task.fileChanges ??= []; task.fileChanges.push({ id: change.snapshotId, path: change.path!, state: 'saved', kind: action.kind as 'project_write' | 'directory' });
               }
               if (task.approval) task.approval.state = 'applied';
               this.toolResult(task, call, value); this.event(task, 'tool', `${call.toolName} 已执行 · ${JSON.stringify(value).slice(0, 1000)}`); this.save(task);

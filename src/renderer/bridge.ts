@@ -26,6 +26,7 @@ const samples: TaskView[] = [{
 }, {
   id: 'preview-answer', goal: '解释任务审批与固定 workflow 有什么区别', skill: 'general',
   status: 'completed', createdAt: now, updatedAt: now, steps: 1, artifacts: [],
+  fileChanges: [{ id: 'e'.repeat(64), path: 'example.ts', state: 'saved', kind: 'project_write' }],
   events: [
     { id: 'b1', at: now, kind: 'user', text: '解释任务审批与固定 workflow 有什么区别' },
     { id: 'b2', at: now, kind: 'assistant', text: '固定 workflow 预先决定每个任务经过哪些阶段。按动作审批只在即将执行需要权限的操作时暂停，绑定具体对象与内容。\n\n直接回答不需要走研究、审批和打包；只有要保存成果时，才展示文件名与完整内容，请你确认。任务步骤由目标和工具结果决定，而不是由页面预设。' },
@@ -44,6 +45,15 @@ const preparedMaterials = new Map<string, import('../shared/contracts').Material
 const materialContents = new Map<string, string>();
 const previewBridge: AgentBridge = {
   preview: true,
+  selectWorkspace: async input => {
+    const task = samples.find(t => t.id === input.taskId)!, tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
+    if (!tab || tab.sha256 !== input.expectedHash || !['markdown', 'code'].includes(tab.kind) || !['file', 'artifact'].includes(tab.source) ||
+      input.start < 0 || input.end <= input.start || input.end > (tab.content?.length ?? 0) || input.end - input.start > 12000) throw new Error('请重新选择有效范围。');
+    const m = { id: crypto.randomUUID(), name: tab.name, sha256: tab.sha256, bytes: new TextEncoder().encode(tab.content ?? '').length, capturedAt: new Date().toISOString(),
+      source: tab.source as 'file' | 'artifact', selection: { start: input.start, end: input.end } };
+    materialContents.set(m.id, tab.content ?? ''); task.materials ??= []; task.materials.push(m); emit(); return clone(task);
+  },
+  openFileDiff: async input => previewWorkspace.diff(input.taskId),
   lastRun: async () => undefined,
   rememberRun: async () => {},
   discardMaterialTicket: async ticket => { preparedMaterials.delete(ticket); },

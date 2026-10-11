@@ -8,6 +8,7 @@ import type { Artifact, Approval } from '../shared/contracts';
 import { askUserInput } from '../shared/questions';
 import { browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput, browserReadInput, browserWaitInput } from '../shared/browser-tools';
 import { materialReadInput } from './materials';
+import { fileEditInput } from '../shared/file-edits';
 
 export const pathInput = z.object({ path: z.string().max(1024) });
 export const artifactInput = z.object({
@@ -35,6 +36,7 @@ export const tools = {
   writeArtifact: tool({ description: 'Save a Markdown/text/JSON/HTML deliverable in the app artifact library. HTML is rendered offline and isolated; no external resources. Runtime permission mode applies.', inputSchema: artifactInput }),
   writeFile: tool({ description: 'Create or replace selected-project text, automatically creating missing parent directories. expectedHash null for a new file, otherwise SHA-256 from readFile. Runtime permission mode and write-before snapshots apply.', inputSchema: writeInput }),
   editFile: tool({ description: 'Replace exactly one occurrence of oldText. Requires readFile hash. Runtime permission mode and write-before snapshots apply.', inputSchema: editInput }),
+  fileEdit: tool({ description: 'Preferred precise edit: one file, expectedHash of ORIGINAL content, 1–32 non-overlapping edits oldText/newText matched against ORIGINAL, never sequentially. Each must be unique or provide exact original UTF-16 startOffset from selection/read. Only LF/CRLF differences may normalize; no fuzzy/whitespace matching. All hunks preflight before one write/snapshot; returns verified hash and ranges. No create/delete/rename or arbitrary diff commands.', inputSchema: fileEditInput }),
   makeDirectory: tool({ description: 'Create a relative project directory and missing parents. Runtime permission mode applies; created empty directories can be restored.', inputSchema: pathInput }),
   runShell: tool({ description: 'Execute a host shell command in a selected-project cwd. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust. No secrets/unrelated private data.', inputSchema: shellInput }),
   runCode: tool({ description: 'Execute JavaScript in Electron bundled Node utility process. require is available. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust.', inputSchema: codeInput }),
@@ -80,7 +82,7 @@ export async function readTool(root: string | undefined, name: string, input: un
     if (bytesRead > 65536) throw new Error('File changed beyond size limit');
     const data = bytes.subarray(0, bytesRead);
     if (data.includes(0)) throw new Error('Binary files are not allowed');
-    const content = new TextDecoder('utf-8', { fatal: true }).decode(data);
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(data);
     return { path, content, sha256: sha256(content), untrusted: true };
   } finally { await handle.close(); }
 }

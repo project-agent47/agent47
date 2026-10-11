@@ -3,6 +3,8 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  selectWorkspace: input => ipcRenderer.invoke('workspace:selection', input),
+  openFileDiff: input => ipcRenderer.invoke('workspace:diff', input),
   lastRun: () => ipcRenderer.invoke('navigation:last-run'),
   rememberRun: id => ipcRenderer.invoke('navigation:remember-run', id),
   prepareMaterial: () => ipcRenderer.invoke('materials:prepare'),
