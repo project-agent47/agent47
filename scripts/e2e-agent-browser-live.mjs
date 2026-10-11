@@ -12,7 +12,7 @@ let app, page;
 const deadline = setTimeout(() => { console.error('Live browser acceptance timed out'); app?.process().kill(); process.exit(1); }, 300000);
 try {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
   await app.evaluate(({ session }, html) => { const original = session.fromPartition; session.fromPartition = function(partition, ...args) {
     const s = original.call(session, partition, ...args); if (partition.startsWith('agent47-web-')) s.protocol.handle('https', () => new Response(html, { headers: { 'content-type': 'text/html' } })); return s;
   }; }, html);

@@ -30,7 +30,7 @@ const report = { platform: process.platform, nativePickerStub: true, modelInvoke
 async function launch() {
   console.log('workspace: launch');
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env: { ...process.env, AGENT47_SMOKE: '1' } });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
 }
 async function open(name) {
   console.log('workspace: open ' + name);

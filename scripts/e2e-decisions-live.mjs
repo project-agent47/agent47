@@ -26,7 +26,7 @@ async function state(id, target) {
 }
 async function launch() {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env });
-  page = await app.firstWindow(); await page.getByLabel('任务目标').waitFor();
+  page = await app.firstWindow(); await page.locator('.sidebar').waitFor();
   app.process().stderr.on('data', bytes => { for (const line of bytes.toString().split('\n')) if (line.startsWith('[model-diagnostic] ')) console.error(line); });
   await app.evaluate(({ dialog }, folder) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [folder] }); }, project);
 }
