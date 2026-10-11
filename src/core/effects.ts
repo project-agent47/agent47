@@ -81,7 +81,7 @@ export async function applyProjectWrite(taskId: string, action: Approval): Promi
   let mode = 0o600;
   try {
     const stat = await lstat(target);
-    if (!stat.isFile() || stat.nlink > 1 || stat.isSymbolicLink() || stat.size > 1_000_000) throw new Error('Unsafe write target');
+    if (!stat.isFile() || stat.nlink > 1 || stat.isSymbolicLink() || stat.size > 4_000_000) throw new Error('Unsafe write target');
     mode = stat.mode & 0o777; current = await readFile(target, 'utf8');
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
   if (current !== undefined && sha256(current) === sha256(action.content)) return { saved: true, path, sha256: sha256(current), replayVerified: true };

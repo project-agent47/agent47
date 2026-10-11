@@ -9,6 +9,7 @@ import { effectNames, prepareEffect, applyProjectWrite, effectDigest, type HostE
 import { projectedMessages, compactionCut, estimateTokens } from './context';
 import type { ModelContext, ModelStep } from './model';
 import type { FileSnapshots } from './snapshots';
+import { relative, isAbsolute, sep } from 'node:path';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
@@ -18,6 +19,13 @@ export interface RuntimeServices {
 }
 
 const terminal = new Set(['completed', 'failed', 'cancelled']);
+function overlappingRoots(a: string, b: string): boolean {
+  const inside = (parent: string, child: string) => {
+    const path = relative(parent, child);
+    return !isAbsolute(path) && path !== '..' && !path.startsWith('..' + sep);
+  };
+  return inside(a, b) || inside(b, a);
+}
 export class TaskRuntime {
   private active = new Map<string, AbortController>();
   private draining = false;
@@ -39,7 +47,7 @@ export class TaskRuntime {
   }
   list(): TaskView[] { return this.store.list().map(task => ({ ...publicTask(task), draft: this.drafts.get(task.id) })); }
   create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask'): TaskView {
-    if (root && this.restoringRoots.has(root)) throw new Error('请等待文件快照恢复完成。');
+    if (root && [...this.restoringRoots].some(other => overlappingRoots(root, other))) throw new Error('请等待文件快照恢复完成。');
     if (!goal.trim() || goal.length > 12000) throw new Error('Task goal must contain 1–12000 characters');
     const now = new Date().toISOString();
     const task: TaskRecord = {
@@ -56,7 +64,7 @@ export class TaskRuntime {
     const prior = this.store.command(commandId);
     if (prior) return publicTask(this.store.get(prior));
     let task = this.store.get(id);
-    if (task.root && this.restoringRoots.has(task.root)) throw new Error('请等待文件快照恢复完成。');
+    if (task.root && [...this.restoringRoots].some(other => overlappingRoots(task.root!, other))) throw new Error('请等待文件快照恢复完成。');
     if (task.effectStarted) throw new Error('Inspect unknown host effects before continuing');
     if (terminal.has(task.status)) {
       const latest = this.store.list().find(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id));
@@ -88,8 +96,9 @@ export class TaskRuntime {
   }
   async restoreFile(id: string, snapshotId: string): Promise<void> {
     const task = this.store.get(id);
-    if (!task.root || this.restoringRoots.has(task.root) || !terminal.has(task.status) || task.effectStarted || this.active.has(id) ||
-      this.store.list().some(other => other.root === task.root && (!terminal.has(other.status) || other.effectStarted))) throw new Error('请先停止或完成此项目的所有任务，再恢复文件。');
+    if (!task.root || [...this.restoringRoots].some(other => overlappingRoots(task.root!, other)) || !terminal.has(task.status) || task.effectStarted || this.active.has(id) ||
+      this.store.list().some(other => other.root && overlappingRoots(other.root, task.root!) &&
+        (!terminal.has(other.status) || other.effectStarted || this.active.has(other.id)))) throw new Error('请先停止或完成此项目的所有任务，再恢复文件。');
     const change = task.fileChanges?.find(item => item.id === snapshotId && item.state === 'saved');
     if (!change || !this.services.snapshots) throw new Error('Snapshot not found');
     this.restoringRoots.add(task.root);
@@ -244,7 +253,12 @@ export class TaskRuntime {
           }
           if (effectNames.has(call.toolName)) {
             if (task.approval?.id !== call.toolCallId) {
-              try { task.approval = await prepareEffect(id, call, task.root, this.services.hostEnabled?.() ?? false); }
+              try {
+                const approval = await prepareEffect(id, call, task.root, this.services.hostEnabled?.() ?? false);
+                task = this.store.get(id); // Do not overwrite permission revocation or cancellation while path I/O awaited.
+                if (task.status === 'cancelled') return;
+                task.approval = approval;
+              }
               catch (error) { this.toolResult(task, call, (error as Error).message, true); this.save(task); continue; }
               this.save(task);
             }
@@ -320,6 +334,9 @@ export class TaskRuntime {
                 value = await this.services.skills.read(input.id, input.path);
               } else value = await readTool(task.root, call.toolName, call.input);
               if (controller.signal.aborted || this.stopped) return;
+              const loadedSkills = task.loadedSkills;
+              task = this.store.get(id);
+              if (loadedSkills) task.loadedSkills = [...new Set([...(task.loadedSkills ?? []), ...loadedSkills])];
               this.toolResult(task, call, value);
               this.event(task, 'tool', `${call.toolName} · ${JSON.stringify(call.input)}`);
             } catch (error) {

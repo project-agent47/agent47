@@ -72,7 +72,8 @@ export class FileSnapshots {
   async restore(taskId: string, id: string): Promise<void> {
     const file = await this.manifest(taskId, id);
     const snapshot = JSON.parse(await readFile(file, 'utf8')) as Snapshot;
-    if (snapshot.taskId !== taskId || snapshot.id !== id || snapshot.state === 'restored') throw new Error('Snapshot not restorable');
+    if (snapshot.taskId !== taskId || snapshot.id !== id) throw new Error('Snapshot not restorable');
+    if (snapshot.state === 'restored') return; // Reconcile a disk commit whose TaskStore acknowledgement was interrupted.
     const { target } = await projectTarget(snapshot.root, snapshot.path);
     if (snapshot.kind === 'project_write') {
       let current: string | undefined;

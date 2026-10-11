@@ -7,7 +7,7 @@ import { FileSnapshots } from '../src/core/snapshots';
 import { prepareEffect } from '../src/core/effects';
 import { sha256 } from '../src/core/tools';
 import { TaskStore } from '../src/core/store';
-import { TaskRuntime } from '../src/core/runtime';
+import { TaskRuntime, type RuntimeServices } from '../src/core/runtime';
 import type { ModelDriver, ModelStep } from '../src/core/model';
 
 async function setup() {
@@ -100,12 +100,12 @@ const call = (name: string, input: unknown): ModelStep => {
 async function until(predicate: () => boolean) {
   const end = Date.now() + 5000; while (!predicate()) { if (Date.now() > end) throw new Error('Timeout'); await new Promise(r => setTimeout(r, 5)); }
 }
-async function runtimeSetup(model: ModelDriver, mode: 'snapshot' | 'ask' = 'snapshot', hostEnabled = false) {
+async function runtimeSetup(model: ModelDriver, mode: 'snapshot' | 'ask' = 'snapshot', hostEnabled = false, extra: Pick<RuntimeServices, 'skills'> = {}) {
   const data = await setup(); const store = new TaskStore(join(data.root, 'tasks.db'));
   const executions: string[] = [];
   const runtime = new TaskRuntime(store, model, join(data.root, 'artifacts'), undefined, {
     snapshots: data.snapshots, fileMode: () => mode, hostEnabled: () => hostEnabled,
-    executeHost: async approval => { executions.push(approval.content); return { output: 'host' }; }
+    executeHost: async approval => { executions.push(approval.content); return { output: 'host' }; }, ...extra
   });
   resources.push({ runtime, store }); runtime.start(); return { ...data, runtime, store, executions };
 }
@@ -168,4 +168,55 @@ it('restoration is visible to the model in the next turn, without replaying prio
   await runtime.restoreFile(task.id, runtime.list()[0].fileChanges![0].id);
   runtime.send(task.id, 'inspect', 'followup', crypto.randomUUID()); await until(() => runtime.list()[0].status === 'completed');
   expect(step).toBe(3);
+});
+it('restore retries reconcile a completed on-disk restore without applying it again', async () => {
+  const { project, snapshots } = await setup();
+  const saved = await snapshots.apply('task-one', await action(project, 'writeFile', { path: 'a.md', content: 'new', expectedHash: null }));
+  await snapshots.restore('task-one', saved.snapshotId);
+  // Disk restore committed, but TaskStore update may not have happened.
+  await expect(snapshots.restore('task-one', saved.snapshotId)).resolves.toBeUndefined();
+});
+it('restore refuses a cancelled task whose file effect is still in flight', async () => {
+  let step = 0, release!: () => void;
+  const { runtime, project, snapshots } = await runtimeSetup(async () => ++step === 1 ? call('writeFile', { path: 'a.md', content: 'one', expectedHash: null }) :
+    step === 3 ? call('writeFile', { path: 'a.md', content: 'two', expectedHash: sha256('one') }) : answer());
+  const first = runtime.create('first', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  const snapshotId = runtime.list()[0].fileChanges![0].id;
+  const apply = snapshots.apply.bind(snapshots);
+  snapshots.apply = async (...args) => { await new Promise<void>(r => { release = r; }); return apply(...args); };
+  const second = runtime.create('second', 'general', project); await until(() => !!release); runtime.cancel(second.id);
+  let rejected = false;
+  try { await runtime.restoreFile(first.id, snapshotId); } catch { rejected = true; }
+  release(); await new Promise(r => setTimeout(r, 30));
+  expect(rejected).toBe(true);
+});
+it('restore locks overlapping selected roots, including a running child-folder task', async () => {
+  let step = 0, release!: () => void;
+  const { runtime, project } = await runtimeSetup(async () => {
+    if (++step === 1) return call('writeFile', { path: 'child/a.md', content: 'one', expectedHash: null });
+    if (step === 3) await new Promise<void>(r => { release = r; });
+    return answer();
+  });
+  const first = runtime.create('parent', 'general', project); await until(() => runtime.list()[0].status === 'completed');
+  const snapshotId = runtime.list()[0].fileChanges![0].id;
+  runtime.create('child', 'general', join(project, 'child')); await until(() => !!release);
+  let rejected = false;
+  try { await runtime.restoreFile(first.id, snapshotId); } catch { rejected = true; }
+  release(); await until(() => runtime.list()[0].status === 'completed');
+  expect(rejected).toBe(true);
+});
+it('an awaited skill read does not overwrite a concurrent permission revocation', async () => {
+  let step = 0, release!: () => void;
+  const { runtime, project } = await runtimeSetup(async () => ++step === 1 ? call('readSkillFile', { id: 'test', path: 'ref.md' }) : answer(), 'snapshot', true, {
+    skills: { catalog: () => [], load: () => ({}), read: async () => { await new Promise<void>(r => { release = r; }); return { content: 'reference' }; } }
+  });
+  const task = runtime.create('read skill', 'general', project); await until(() => !!release);
+  runtime.setPermissions(task.id, 'ask', 'ask'); release(); await until(() => runtime.list()[0].status === 'completed');
+  expect(runtime.list()[0].fileMode).toBe('ask');
+});
+it('replays a large valid UTF-8 write using its original snapshot, not a 1MiB byte cutoff', async () => {
+  const { project, snapshots } = await setup();
+  const approved = await action(project, 'writeFile', { path: 'large.md', content: '字'.repeat(400000), expectedHash: null });
+  await snapshots.apply('task-one', approved);
+  expect((await snapshots.apply('task-one', approved)).replayVerified).toBe(true);
 });
