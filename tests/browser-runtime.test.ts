@@ -26,8 +26,16 @@ async function setup(trusted = false, failure = false) {
     messages: [{ role: 'assistant', content: [{ type: 'tool-call', toolName: 'browserClick', toolCallId: 'click-test', input: {} }] }]
   } : { text: 'Done', calls: [], messages: [{ role: 'assistant', content: 'Done' }] }, join(root, 'artifacts'), () => {}, { browser });
   open.push({ runtime, store }); runtime.start(); const task = runtime.create('Controlled test', 'general');
-  return { runtime, store, task, execute };
+  return { runtime, store, task, execute, browser };
 }
+it('changing browser scope resumes stale approval as an error without executing it', async () => {
+  const { runtime, execute, task, browser } = await setup();
+  await wait(() => runtime.list()[0].status === 'awaiting_approval');
+  browser.validate = () => { throw new Error('Browser grant generation changed'); };
+  runtime.browserPermissionsChanged(task.id);
+  await wait(() => runtime.list()[0].status === 'completed');
+  expect(execute).not.toHaveBeenCalled();
+});
 it('browser exact-payload approval cannot be converted into file permission', async () => {
   const { runtime, task, execute } = await setup(); await wait(() => runtime.list()[0].status === 'awaiting_approval');
   const a = runtime.list()[0].approval!;

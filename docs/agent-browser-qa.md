@@ -33,8 +33,8 @@ Native fixture injects SDK-shaped intents into temporary test SQLite and uses fi
 
 ## Local results
 
-- 129 unit tests, build/typecheck/lint/design check passed; full npm audit0.
-- Native browser tool fixture passed8 groups, including request/open and revocation; original local viewer6 groups, web context6 groups and Electron isolation smoke passed.
+- 130 unit tests, build/typecheck/lint/design check passed; full npm audit0.
+- Native browser tool fixture passed9 groups, including request/open, scope upgrade invalidation and revocation; original local viewer6 groups, web context6 groups and Electron isolation smoke passed.
 - Real public Pi + DeepSeek:5 model steps, verified2026-10-11T09:23:17.303Z; no model/web/IPC fixtures or intent injection. Initial page content was lazy; Agent scrolled and read again.
 - Real DeepSeek controlled-page interaction:6 model steps, verified2026-10-11T09:23:37.766Z; SDK calls, main broker, actual DOM, IPC/runtime/SQLite real, only HTTPS page response fixture. Random result appeared only after actual DOM click.
 - Failed initial dynamic-tool-catalog acceptance and first-read-only test assertion are not counted as passes. Stable browser catalog fixed stale model inference; public evidence assertion checks all actual reads rather than assuming first loaded content contains lazy page sections.

@@ -157,6 +157,14 @@ export class TaskRuntime {
   setWebOrigins(id: string, origins: string[]): void {
     const task = this.store.get(id); task.webOrigins = [...new Set(origins)]; this.save(task);
   }
+  browserPermissionsChanged(id: string): void {
+    const task = this.store.get(id);
+    if (task.status === 'awaiting_approval' && task.approval?.kind === 'browser') {
+      // The broker invalidates the old snapshot/generation. Resume to produce a
+      // stale-intent result, not silently approve it under the new scope.
+      task.status = 'queued'; this.save(task); this.kick();
+    }
+  }
   private questionFor(task: TaskRecord, call: ToolCall): UserQuestion {
     const { questions, legacy } = parseQuestions(call.input);
     return { id: call.toolCallId, text: questions.map(q => q.prompt).join('\n'), questions, legacy, revision: 1,

@@ -62,8 +62,13 @@ try {
   await page.getByRole('heading', { name: '操作网页', exact: true }).waitFor();
   await page.getByRole('button', { name: '拒绝执行', exact: true }).click(); await completed(taskId);
   if (await nativeText() !== 'Not saved') throw new Error('Denied click executed');
+  await intent(taskId, 'browserRead', { tabId }); await completed(taskId); snapshot = (await result(taskId)).value;
+  await intent(taskId, 'browserClick', { tabId, snapshotId: snapshot.snapshotId, ref: snapshot.elements.find(e => e.name === 'Save test note').ref });
+  await page.getByRole('heading', { name: '操作网页', exact: true }).waitFor();
   await page.getByLabel('当前网页 Agent 权限').selectOption('allow');
   await page.getByRole('button', { name: '确认可信交互范围', exact: true }).click();
+  await completed(taskId);
+  if (await nativeText() !== 'Not saved' || (await result(taskId)).type !== 'error-text') throw new Error('Scope upgrade silently approved stale pending click');
   await intent(taskId, 'browserRead', { tabId }); await completed(taskId); snapshot = (await result(taskId)).value;
   await intent(taskId, 'browserClick', { tabId, snapshotId: snapshot.snapshotId, ref: snapshot.elements.find(e => e.name === 'Save test note').ref });
   await completed(taskId); await expect.poll(nativeText).toBe('SAVED:PUBLIC_TEST_NOTE');
@@ -77,6 +82,6 @@ try {
   await page.getByRole('button', { name: '批准执行', exact: true }).click(); await completed(taskId);
   const opened = (await result(taskId)).value;
   if (!opened.opened || opened.mode !== 'ask') throw new Error('Approved browserOpen failed to grant exact new tab');
-  await writeFile('.qa/agent-browser-native-results.json', JSON.stringify({ result: 'AGENT_BROWSER_NATIVE_OK', modelFixture: true, httpsResponseFixture: true, toolIntents: 'SQLite test injection', cases: ['explicit dock grant', 'bounded refs/no passwords or values', 'exact fill approval', 'denied click has no effect', 'trusted click real DOM effect', 'dispatch not business success', 'revocation denies reads', 'agent open request uses exact URL approval'] }, null, 2));
+  await writeFile('.qa/agent-browser-native-results.json', JSON.stringify({ result: 'AGENT_BROWSER_NATIVE_OK', modelFixture: true, httpsResponseFixture: true, toolIntents: 'SQLite test injection', cases: ['explicit dock grant', 'bounded refs/no passwords or values', 'exact fill approval', 'denied click has no effect', 'scope upgrade invalidates pending click', 'trusted click real DOM effect', 'dispatch not business success', 'revocation denies reads', 'agent open request uses exact URL approval'] }, null, 2));
   console.log('AGENT_BROWSER_NATIVE_OK');
 } finally { if (app) await app.close(); clearTimeout(watchdog); }

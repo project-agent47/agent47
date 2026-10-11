@@ -79,7 +79,8 @@ async function boot(): Promise<void> {
   handle('workspace:web', value => workspace.openWeb(z.string().url().max(2048).parse(value)));
   handle('workspace:agent-grant', value => {
     const input = z.object({ taskId: idSchema, tabId: idSchema, expectedURL: z.string().url().max(2048), mode: z.enum(['deny', 'read', 'ask', 'allow']) }).strict().parse(value);
-    return workspace.agentGrant(input.taskId, input.tabId, input.mode, input.expectedURL);
+    const state = workspace.agentGrant(input.taskId, input.tabId, input.mode, input.expectedURL);
+    runtime.browserPermissionsChanged(input.taskId); return state;
   });
   handle('workspace:capture', value => { const input = z.object({ tabId: idSchema, taskId: idSchema }).strict().parse(value); return workspace.capture(input.tabId, input.taskId); });
   handle('workspace:send-capture', value => {
