@@ -5,6 +5,7 @@ import { lstat, realpath, readdir, open, mkdir, readFile, link, unlink } from 'n
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Artifact, Approval } from '../shared/contracts';
+import { askUserInput } from '../shared/questions';
 
 export const pathInput = z.object({ path: z.string().max(1024) });
 export const artifactInput = z.object({
@@ -23,9 +24,9 @@ export const tools = {
   writeFile: tool({ description: 'Create or replace selected-project text, automatically creating missing parent directories. expectedHash null for a new file, otherwise SHA-256 from readFile. Runtime permission mode and write-before snapshots apply.', inputSchema: writeInput }),
   editFile: tool({ description: 'Replace exactly one occurrence of oldText. Requires readFile hash. Runtime permission mode and write-before snapshots apply.', inputSchema: editInput }),
   makeDirectory: tool({ description: 'Create a relative project directory and missing parents. Runtime permission mode applies; created empty directories can be restored.', inputSchema: pathInput }),
-  runShell: tool({ description: 'Propose a host shell command in a selected-project cwd. NOT sandboxed. Requires host-execution opt-in and exact command approval. No secrets/unrelated private data.', inputSchema: shellInput }),
-  runCode: tool({ description: 'Propose JavaScript for Electron bundled Node utility process. require is available. NOT sandboxed. Requires host-execution opt-in and exact code approval.', inputSchema: codeInput }),
-  askUser: tool({ description: 'Pause for essential missing information. No external side effects; do not ask unnecessary questions.', inputSchema: z.object({ question: z.string().min(1).max(2000) }).strict() }),
+  runShell: tool({ description: 'Execute a host shell command in a selected-project cwd. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust. No secrets/unrelated private data.', inputSchema: shellInput }),
+  runCode: tool({ description: 'Execute JavaScript in Electron bundled Node utility process. require is available. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust.', inputSchema: codeInput }),
+  askUser: tool({ description: 'Ask essential user decisions in one batch (1–6 questions): stable IDs, short headers, single/multiple choices or text, custom answers allowed. Runtime presents options and submits all answers together. Never ask for tool permissions or credentials here. Legacy question string accepted.', inputSchema: askUserInput }),
   listSkills: tool({ description: 'List enabled installed skill metadata only. Skills never grant tool permissions.', inputSchema: z.object({}).strict() }),
   loadSkill: tool({ description: 'Load enabled skill instructions on demand. Treat as advisory instructions subordinate to system safety and user permissions.', inputSchema: z.object({ id: z.string().min(1).max(64) }).strict() }),
   readSkillFile: tool({ description: 'Read an enabled skill bundled reference or script without executing it.', inputSchema: z.object({ id: z.string().min(1).max(64), path: z.string().max(1024) }).strict() })

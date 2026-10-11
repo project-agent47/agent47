@@ -2,6 +2,7 @@ import { _electron as electron, expect } from '@playwright/test';
 import { mkdtemp, mkdir, readFile, writeFile, lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { answerQuestions } from './decision-test-ui.mjs';
 
 if (process.env.AGENT47_AUTHENTICATED_PROXY !== '1') throw new Error('Authorized proxy required');
 const root = await mkdtemp(join(tmpdir(), 'agent47-permissions-live-'));
@@ -41,8 +42,7 @@ try {
   if (paused.fileChanges.length !== 3 || await readFile(join(project, 'README.md'), 'utf8') !== 'MODIFIED_README_47' ||
       await readFile(join(project, 'governance/README.md'), 'utf8') !== 'GOVERNANCE_NESTED_OK_47' ||
       !(await lstat(join(project, 'governance/empty'))).isDirectory()) throw new Error('File/dir batch incomplete');
-  await page.getByLabel('继续对话', { exact: true }).fill('yes');
-  await page.getByRole('button', { name: '发送消息', exact: true }).click(); await wait(task.id, 'completed');
+  await answerQuestions(page, task.id, 'yes'); await wait(task.id, 'completed');
   report.cases.push({ name: 'real DeepSeek edits existing file, writes missing governance parent and creates empty directory; shell disabled; zero approval clicks', snapshots: 3, passed: true });
   await app.close(); await launch();
   await page.locator('.recent-item').first().click();
@@ -52,12 +52,16 @@ try {
   const row = path => page.locator('.snapshot-row').filter({ has: page.locator('span', { hasText: path }) });
   if (process.env.AGENT47_BATCH_UNDO === '1') {
     await page.getByRole('button', { name: '撤销第 1 轮文件改动', exact: true }).click();
+    await page.getByRole('button', { name: '确认撤销本轮文件', exact: true }).click();
     await expect.poll(async () => (await tasks()).find(t => t.id === task.id).undo?.state).toBe('completed');
     report.cases.push({ name: 'single UI confirmation reverses the whole real-model run after restart', restored: 3, passed: true, atomic: false });
   } else {
     await row('governance/empty').getByRole('button', { name: '恢复改动前', exact: true }).click();
+    await page.getByRole('button', { name: '确认恢复', exact: true }).click();
     await row('governance/README.md').getByRole('button', { name: '恢复改动前', exact: true }).click();
+    await page.getByRole('button', { name: '确认恢复', exact: true }).click();
     await row('README.md').filter({ hasNotText: 'governance/' }).getByRole('button', { name: '恢复改动前', exact: true }).click();
+    await page.getByRole('button', { name: '确认恢复', exact: true }).click();
   }
   await expect.poll(() => readFile(join(project, 'README.md'), 'utf8')).toBe('ORIGINAL_README_47');
   try { await lstat(join(project, 'governance')); throw new Error('Created parent was not removed'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -92,6 +96,7 @@ try {
   await page.locator('.recent-item').first().click();
   await page.locator('.permission-disclosure').first().locator('summary').click();
   await page.getByLabel('本次对话执行权限').selectOption('allow');
+  await page.getByRole('button', { name: '授权本次对话免确认', exact: true }).click();
   const command = process.platform === 'win32' ? 'echo TRUSTED_SHELL_OK_47' : 'printf TRUSTED_SHELL_OK_47';
   const text = `In this disposable coding test, the user has enabled trusted host tools. Call runCode with exactly code console.log("TRUSTED_NODE_OK_47", process.versions.node); cwd "." timeoutMs 10000. Also call runShell with exactly command ${command} cwd "." timeoutMs 10000. No file writes, no extra commands, no permissions questions. Finish by quoting both actual outputs.`;
   await page.getByLabel('继续对话', { exact: true }).fill(text); await page.getByRole('button', { name: '发送消息', exact: true }).click();

@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { answerQuestions } from './decision-test-ui.mjs';
 
 if (process.env.AGENT47_AUTHENTICATED_PROXY !== '1') throw new Error('Authorized proxy required');
 const root = await mkdtemp(join(tmpdir(), 'agent47-capabilities-'));
@@ -113,8 +114,7 @@ try {
 
   const question = await create('For a coding configuration test, call askUser to ask which target OS to use. Do not guess. After the user answers, confirm the chosen OS and finish. No other tools.', false);
   await state(question.id, 'awaiting_input');
-  await page.getByLabel('继续对话', { exact: true }).fill('Windows');
-  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await answerQuestions(page, question.id, 'Windows');
   const answered = await state(question.id, 'completed');
   if (!answered.events.some(e=>e.kind === 'assistant' && e.text.includes('Windows'))) throw new Error('Clarification answer lost');
   report.cases.push({ name: 'askUser pause + human answer + actual model continuation', passed: true });

@@ -26,6 +26,7 @@ npm run smoke:electron
 npm run test:desktop:live # real DeepSeek desktop acceptance, approved proxy required
 npm run test:capabilities:live # real streaming, skills, edits, Node/Shell and compaction
 npm run test:permissions:live # real zero-click file batch, nested directories, snapshot restore and scoped host trust
+npm run test:decisions:live # real multi-question decision dock, restart drafts and explicit conversation trust
 ```
 
 The Electron smoke script uses a deterministic model fixture and a temporary user-data directory. On a headless Linux CI host use `xvfb-run -a npm run smoke:electron`; that harness passes `--no-sandbox` only for the host test. Production app configuration keeps renderer sandboxing enabled.
@@ -34,7 +35,7 @@ The Electron smoke script uses a deterministic model fixture and a temporary use
 
 - Rebuilt task center, conversation, visible tool-permission controls, optional exact-content approval, artifact library, capability disclosure and settings.
 - AI SDK `ToolLoopAgent.stream()`, separate provider reasoning, safe GFM Markdown and supplier input/output/cache usage (no billing or price estimates).
-- Multi-run conversations, essential-input questions, durable steering/follow-up queues and immutable finished runs.
+- Multi-run conversations, batch essential-input questions with choices/custom text, persistent draft/review and one submission, durable steering/follow-up queues and immutable finished runs.
 - Bounded selected-folder reads, nested directory creation, hash-checked project writes/edits and app-owned artifacts. New tasks default to project authorization + automatic write-before snapshots, not per-file confirmation; manual review remains available.
 - Reviewed `SKILL.md` text-bundle import, explicit enable/disable, metadata catalog and on-demand instructions/references/scripts. No automatic install or script execution.
 - Optional host Shell and JavaScript using Electron's bundled Node utility process. **Not an OS security sandbox**; a visible Settings switch enables execution, then the conversation policy chooses exact-command review or explicitly trusted scoped execution. Application secret/proxy environment is not inherited.
@@ -43,6 +44,8 @@ The Electron smoke script uses a deterministic model fixture and a temporary use
 - Isolated renderer/preload/main architecture; no unauthenticated HTTP API.
 
 The compact workbench docks its conversation composer outside scrolling history. Active-run input enters a persistent, removable queue; messages join at the next tool boundary, or an explicit immediate-send interrupts only the model request. Skills support reviewed upgrades, inactive-by-default new versions, immutable per-conversation hash pins and unregistering without erasing history. The `readWeb` tool reads bounded public HTTPS HTML/text only from explicitly authorized origins; it has no cookies, credentials, JavaScript or browser action capability.
+
+Pending questions and approvals replace the ordinary composer with a fixed-bottom decision panel. Answer one or several questions, navigate back, supply custom text, skip optional questions and submit all answers once. Chat drafts remain separate. Tool/artifact consent supports exact-payload review or explicit conversation scope; “开启可信对话” in task permissions enables host tools without repeated prompts after one clear OS-rights consent. It is not a sandbox or a grant to other conversations.
 
 No full browser/desktop automation, scheduler, MCP, multi-agent coordination, OS tool sandbox, package marketplace or binary skill assets yet. No billing/price/monetary-budget feature is in scope. Do not mistake the preview fixture for external execution.
 
@@ -67,6 +70,7 @@ Run each packaging command on its target OS with the required platform toolchain
 - [Simplified permissions, directories and recoverable snapshots](docs/redesign/permissions-and-snapshots.md)
 - [Whole-run file undo and opt-in snapshot retention](docs/redesign/run-undo-and-retention.md)
 - [Compact workbench, queued input, skill lifecycle and public HTTPS reader](docs/redesign/compact-workbench.md)
+- [Unified decision dock and scoped trust](docs/redesign/unified-decision-dock.md)
 - [Design specification](docs/redesign/design-system.md)
 - [Offline component showcase](docs/redesign/design-showcase.html)
 - [Current workstate](.agents/workstate.md)

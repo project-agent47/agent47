@@ -11,6 +11,7 @@ export interface TaskRecord extends TaskView {
   effectStarted?: string; loadedSkills?: string[];
   inputBoundary?: boolean;
   queueAfterStep?: number;
+  questionReceipts?: Record<string, string>;
 }
 
 /** One process owns this database. Every checkpoint includes messages and action state. */
@@ -71,6 +72,6 @@ export function publicTask(task: TaskRecord): TaskView {
     parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
     context: task.context, unknownEffect: Boolean(task.effectStarted),
-    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? []
+    fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? [], composerDraft: task.composerDraft
   };
 }
