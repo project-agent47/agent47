@@ -165,8 +165,8 @@ export function MessageComposer({ task, busy, run, sent, editing, back, remember
       const next = e.target.value; setText(next); remember(next); latest.current = next; clearTimeout(timer.current); timer.current = setTimeout(() => { void persist().catch(() => {}); }, 250);
     }} maxLength={12000} rows={2} placeholder="补充要求或继续追问…" onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
     {draftError && <p className="decision-error" role="alert">{draftError}<button type="button" className="text-button" onClick={() => void persist().then(() => setDraftError('')).catch(() => {})}>重试保存</button></p>}
-    <div className="composer-bottom">{editing ? <button type="button" className="text-button" onClick={back}>回到待回答／确认</button> : <span className="context-note">Enter 发送 · Shift + Enter 换行</span>}
+    <div className="composer-bottom">{editing ? <button type="button" className="text-button" onClick={back}>{task.status === 'paused' ? '回到暂停与续跑' : '回到待回答／确认'}</button> : <span className="context-note">Enter 发送 · Shift + Enter 换行</span>}
       <button className="primary small-button" type="submit" disabled={!text.trim() || busy || task.status === 'awaiting_reconciliation' || (task.unknownEffect && task.status !== 'running')}>发送消息</button></div>
-    {editing && <p className="context-note">补充要求先加入队列；点“立即发送”才作废当前决定。这里不是答题或授权入口。</p>}
+    {editing && <p className="context-note">{task.status === 'paused' ? '补充先保存到队列，不解除暂停；回到决策区点击“继续本轮”。立即发送仅提前排序；若有旧问题／审批会将其作废，不代替续跑或工具授权。' : '补充要求先加入队列；点“立即发送”才作废当前决定。这里不是答题或授权入口。'}</p>}
   </form>;
 }

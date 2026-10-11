@@ -1,4 +1,37 @@
 import { test, expect } from '@playwright/test';
+test('pause occupies the decision dock, supplements do not resume, same run continues', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('任务目标').fill('验证安全暂停交互');
+  await page.getByLabel('开始任务', { exact: true }).click();
+  await page.getByRole('button', { name: '暂停任务', exact: true }).click();
+  await expect(page.getByLabel('暂停与续跑')).toBeVisible();
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '补充要求', exact: true }).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('保留同一轮次，不重新执行');
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(page.getByLabel('暂停与续跑')).toBeVisible();
+  await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('保留同一轮次');
+  await page.getByRole('button', { name: '立即发送', exact: true }).click();
+  await expect(page.getByLabel('授权确认', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('暂停与续跑', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('保留同一轮次');
+  await page.getByRole('button', { name: '继续本轮', exact: true }).click();
+  await expect(page.locator('.completion-note')).toBeVisible();
+  await expect(page.locator('.task-meta')).toContainText('第 1 轮');
+});
+test('pausing a human question preserves its decision and fits narrow dark layout', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('任务目标').fill('多题演示');
+  await page.getByLabel('开始任务', { exact: true }).click();
+  await page.getByRole('button', { name: '暂停任务', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  await expect(page.getByLabel('暂停与续跑')).toBeVisible();
+  const dock = await page.getByLabel('暂停与续跑').boundingBox();
+  expect(dock!.x + dock!.width).toBeLessThanOrEqual(391);
+  await page.getByRole('button', { name: '继续本轮', exact: true }).click();
+  await expect(page.getByLabel('回答 Agent 问题', { exact: true })).toBeVisible();
+});
 test('material chips distinguish local viewing from explicit conversation references', async ({ page }) => {
   await page.goto('/');
   await page.locator('.task-row').nth(1).click();

@@ -1,4 +1,6 @@
-export type TaskStatus = 'queued' | 'running' | 'awaiting_approval' | 'awaiting_input' | 'awaiting_reconciliation' | 'completed' | 'failed' | 'cancelled';
+export type TaskStatus = 'queued' | 'running' | 'paused' | 'awaiting_approval' | 'awaiting_input' | 'awaiting_reconciliation' | 'completed' | 'failed' | 'cancelled';
+export interface ExecutionPause { reason: 'manual' | 'window' | 'repeated_tool' | 'errors'; at: string; detail: string; resumeStatus: 'queued' | 'awaiting_approval' | 'awaiting_input' }
+export interface ExecutionProgress { window: number; windowStart: number; windowSize: number; tools: number; errors: number; lastTool?: string; lastAt?: string }
 export type SkillId = 'general' | 'review' | 'deliver';
 export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string; materials?: MaterialView[] }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
@@ -41,6 +43,9 @@ export interface TaskView {
   fileMode?: 'snapshot' | 'ask'; hostMode?: 'ask' | 'allow';
   fileChanges?: FileChange[];
   undo?: RunUndo;
+  pause?: ExecutionPause;
+  pauseRequested?: boolean;
+  progress?: ExecutionProgress;
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
@@ -72,6 +77,8 @@ export interface AgentBridge {
   listTasks(): Promise<TaskView[]>;
   createTask(input: CreateInput): Promise<TaskView>;
   cancelTask(id: string): Promise<void>;
+  pauseTask(id: string): Promise<void>;
+  resumeTask(id: string): Promise<void>;
   sendMessage(input: { taskId: string; text: string; mode: 'queue' | 'steer' | 'followup'; clientMessageId: string; instruction?: boolean; materialIds?: string[] }): Promise<TaskView>;
   manageQueue(input: { taskId: string; messageId: string; action: 'delete' | 'send' }): Promise<TaskView>;
   saveQuestionDraft(input: QuestionDraftInput): Promise<QuestionDraft>;

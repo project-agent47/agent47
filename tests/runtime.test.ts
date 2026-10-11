@@ -127,11 +127,12 @@ describe('goal-driven durable runtime', () => {
     expect(runtime.list()[0].status).toBe('cancelled');
     expect(runtime.list()[0].events.some(e => e.text === 'late')).toBe(false);
   });
-  it('caps a looping model at 12 steps', async () => {
+  it('pauses an identical invalid-tool loop before wasting the entire window', async () => {
     const { runtime } = await setup(async () => call('unknownTool', { path: '.' }, crypto.randomUUID()));
     runtime.create('A', 'general');
-    await until(() => runtime.list()[0].status === 'failed');
-    expect(runtime.list()[0].steps).toBe(12);
+    await until(() => runtime.list()[0].status === 'paused');
+    expect(runtime.list()[0].steps).toBe(3);
+    expect(runtime.list()[0].pause?.reason).toBe('repeated_tool');
   });
   it('redacts arbitrary upstream error payloads', async () => {
     const { runtime } = await setup(async () => { throw new Error('Authorization: Bearer SUPER_SECRET'); });

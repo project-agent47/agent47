@@ -14,11 +14,13 @@ import { relative, isAbsolute, sep, resolve } from 'node:path';
 import { browserReadNames, browserEffectNames } from '../shared/browser-tools';
 import type { Approval } from '../shared/contracts';
 import { materialMessage, readMaterial, type MaterialSnapshot } from './materials';
+import { inputKey, recordObservation } from './progress';
 
 export interface RuntimeServices {
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
   skills?: { catalog(): unknown[]; load(id: string, hash?: string): unknown; read(id: string, path: string, hash?: string): Promise<unknown> };
   contextThreshold?: number;
+  executionWindow?: number;
   fileMode?: () => 'snapshot' | 'ask'; snapshots?: FileSnapshots;
   readWeb?: (url: string, origins: string[], signal: AbortSignal) => Promise<unknown>;
   browser?: {
@@ -55,6 +57,8 @@ export class TaskRuntime {
       if (!titles.has(key) || (t.runNumber ?? 1) === 1) titles.set(key, t.conversationTitle ?? t.goal.split('\n')[0].slice(0, 60));
     }
     for (const task of records) {
+      if (!task.progress) { this.initProgress(task); this.save(task); }
+      if (task.pauseRequested && task.status === 'queued') { this.enterPause(task, 'manual'); continue; }
       if (!task.conversationTitle) { task.conversationTitle = titles.get(task.conversationId ?? task.id); this.save(task); }
       // Additive checkpoint migration; preserve old tool-call identity and state.
       if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser' && !task.question?.digest) {
@@ -73,10 +77,46 @@ export class TaskRuntime {
       if (changedUsage) this.save(task);
       if (task.status === 'running') {
         task.status = task.effectStarted ? 'awaiting_reconciliation' : 'queued';
+        if (task.pauseRequested && !task.effectStarted) { this.enterPause(task, 'manual'); continue; }
         this.event(task, 'system', task.effectStarted ? '工具执行结果未知。请检查本机或网页实际效果后确认，不会自动重放操作。' : '应用已重启，从已保存的检查点继续。'); this.save(task);
       }
     }
     this.kick();
+  }
+  private initProgress(task: TaskRecord): void {
+    task.progress ??= { window: 1, windowStart: 0, windowSize: Math.max(1, Math.min(12, this.services.executionWindow ?? 12)), tools: 0, errors: 0 };
+  }
+  private enterPause(task: TaskRecord, reason: NonNullable<TaskView['pause']>['reason']): void {
+    this.initProgress(task);
+    const detail = reason === 'manual' ? '已在安全边界暂停。已开始的工具可能已完成，不回滚，也不会重放。'
+      : reason === 'window' ? `本执行窗口已完成 ${task.progress!.windowSize} 个模型步骤；检查记录后可继续同一轮次。`
+      : reason === 'errors' ? '连续 4 次工具错误。请检查权限、输入或连接，调整要求后再继续。'
+      : '检测到重复工具输入／观察。请检查是否空转；继续不代表操作已成功或获得新权限。';
+    task.pause = { reason, at: new Date().toISOString(), detail,
+      resumeStatus: task.status === 'awaiting_approval' || task.status === 'awaiting_input' ? task.status : 'queued' };
+    task.status = 'paused'; task.pauseRequested = false;
+    this.event(task, 'system', detail); this.save(task);
+  }
+  pause(id: string): void {
+    const task = this.store.get(id);
+    if (task.status === 'paused' || task.pauseRequested) return;
+    if (terminal.has(task.status) || task.status === 'awaiting_reconciliation' || task.effectStarted && !this.active.has(id)) throw new Error('请先检查未知效果；已结束任务不能暂停。');
+    if (this.active.has(id)) {
+      task.pauseRequested = true; this.save(task);
+      // Only interrupt model inference. A dispatched tool is allowed to settle.
+      this.modelControllers.get(id)?.abort();
+    } else this.enterPause(task, 'manual');
+  }
+  resume(id: string): void {
+    const task = this.store.get(id);
+    if (task.status !== 'paused' || !task.pause || task.effectStarted || this.active.has(id)) throw new Error('请等待安全暂停完成，或先检查未知执行效果。');
+    if (this.list().find(t => t.id === id)?.latestRunId !== id) throw new Error('请回到当前轮次继续。');
+    this.initProgress(task);
+    task.progress!.window++; task.progress!.windowStart = task.steps;
+    task.progressGuard = { repeatedInputs: 0, repeatedObservations: 0, consecutiveErrors: 0 };
+    task.status = task.pause.resumeStatus; task.pause = undefined; task.pauseRequested = false;
+    this.event(task, 'system', '继续本轮检查点；历史步骤与用量累计保留，权限不变，已完成工具不重放。');
+    this.save(task); this.kick();
   }
   list(): TaskView[] {
     const records = this.store.list(), latest = new Map<string, string>();
@@ -118,6 +158,7 @@ export class TaskRuntime {
     task.materialSnapshots = Object.fromEntries(materials.map(m => [m.id, m]));
     task.materials = materials.map(({ id, name, sha256, bytes, capturedAt, source }) => ({ id, name, sha256, bytes, capturedAt, source }));
     task.authorizedMaterialIds = materials.map(m => m.id);
+    this.initProgress(task);
     this.event(task, 'user', task.goal, task.materials); this.save(task); this.kick();
     return publicTask(task);
   }
@@ -144,6 +185,8 @@ export class TaskRuntime {
       this.store.saveCommand(commandId, task, hadQueue || hadDraft ? parent : undefined); this.changed(); this.kick(); return publicTask(task);
     }
     if (task.status === 'awaiting_reconciliation') throw new Error('Inspect unknown host effects before continuing');
+    if (task.status === 'paused' && task.pause?.resumeStatus === 'awaiting_input' && task.question?.legacy && !instruction)
+      throw new Error('请先继续本轮，再回答当前问题。');
     if (task.status === 'awaiting_input' && task.pending[0]?.toolName === 'askUser' && task.question?.legacy && !instruction) {
       this.toolResult(task, task.pending[0], { answer: text.trim(), fromUser: true });
       task.question = undefined; task.status = 'queued'; this.event(task, 'user', text.trim());
@@ -153,6 +196,10 @@ export class TaskRuntime {
       if (['awaiting_approval', 'awaiting_input'].includes(task.status) && mode === 'steer') {
         if (task.approval) task.approval.state = 'denied';
         task.status = 'queued'; task.question = undefined;
+      }
+      if (task.status === 'paused' && mode === 'steer' && task.pause) {
+        task.pause.resumeStatus = 'queued'; task.question = undefined;
+        if (task.approval) task.approval.state = 'denied';
       }
     }
     task.composerDraft = '';
@@ -186,6 +233,10 @@ export class TaskRuntime {
       task.status = 'queued'; task.question = undefined;
       if (task.approval) task.approval.state = 'denied';
     }
+    if (task.status === 'paused' && task.pause) {
+      task.pause.resumeStatus = 'queued'; task.question = undefined;
+      if (task.approval) task.approval.state = 'denied';
+    }
     this.save(task); this.interruptModel(id); this.kick(); return publicTask(task);
   }
   setPermissions(id: string, fileMode: 'snapshot' | 'ask', hostMode: 'ask' | 'allow'): void {
@@ -195,6 +246,7 @@ export class TaskRuntime {
     task.fileMode = fileMode; task.hostMode = hostMode;
     this.event(task, 'system', `工具权限：文件 ${fileMode === 'snapshot' ? '自动备份并修改' : '逐次确认'}；本机执行 ${hostMode === 'allow' ? '本次对话免确认（非沙箱）' : '逐次确认'}。`);
     if (task.status === 'awaiting_approval') task.status = 'queued';
+    if (task.status === 'paused' && task.pause?.resumeStatus === 'awaiting_approval') task.pause.resumeStatus = 'queued';
     this.save(task); this.kick();
   }
   setWebOrigins(id: string, origins: string[]): void {
@@ -206,6 +258,9 @@ export class TaskRuntime {
       // The broker invalidates the old snapshot/generation. Resume to produce a
       // stale-intent result, not silently approve it under the new scope.
       task.status = 'queued'; this.save(task); this.kick();
+    }
+    if (task.status === 'paused' && task.pause?.resumeStatus === 'awaiting_approval' && task.approval?.kind === 'browser') {
+      task.pause.resumeStatus = 'queued'; this.save(task);
     }
   }
   private questionFor(task: TaskRecord, call: ToolCall): UserQuestion {
@@ -371,6 +426,7 @@ export class TaskRuntime {
       fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
     if (includeQueued) for (const input of parent.queuedInput ?? []) this.event(task, 'user', input.text, input.materials);
+    this.initProgress(task);
     this.event(task, 'system', `开始第 ${task.runNumber} 轮执行；旧执行轮次保持不变。`);
     this.event(task, 'user', text.trim(), materials); return task;
   }
@@ -378,6 +434,7 @@ export class TaskRuntime {
     const task = this.store.get(id);
     if (terminal.has(task.status)) throw new Error('Finished tasks cannot be cancelled or resumed');
     task.status = 'cancelled';
+    task.pause = undefined; task.pauseRequested = false;
     task.question = undefined;
     if (task.approval?.state === 'pending') task.approval.state = 'denied';
     this.active.get(id)?.abort();
@@ -429,6 +486,7 @@ export class TaskRuntime {
     } finally { this.draining = false; }
   }
   private toolResult(task: TaskRecord, call: ToolCall, value: unknown, error = false): void {
+    this.initProgress(task); recordObservation(task, call, value, error);
     const message: ModelMessage = { role: 'tool', content: [{
       type: 'tool-result', toolCallId: call.toolCallId, toolName: call.toolName,
       output: error ? { type: 'error-text', value: String(value) } : { type: 'json', value: JSON.parse(JSON.stringify(value)) }
@@ -496,6 +554,8 @@ export class TaskRuntime {
       while (!this.stopped && !controller.signal.aborted) {
         task = this.store.get(id);
         if (task.status === 'cancelled') return;
+        if (task.pauseRequested) { this.enterPause(task, 'manual'); return; }
+        if (task.status === 'paused') return;
         const hasImmediate = task.queuedInput?.some(item => item.mode === 'steer');
         const queueBoundary = task.inputBoundary || (!task.pending.length && task.steps >= (task.queueAfterStep ?? 0));
         const steering = task.queuedInput?.filter(item => hasImmediate ? item.mode === 'steer' : item.mode === 'queue' && queueBoundary) ?? [];
@@ -511,9 +571,15 @@ export class TaskRuntime {
           // Promoting one message must not promote the rest of the ordinary queue.
           task.queueAfterStep = hasImmediate ? task.steps + 1 : undefined;
           task.inputBoundary = false; this.save(task);
+          task.progressGuard = { repeatedInputs: 0, repeatedObservations: 0, consecutiveErrors: 0 }; this.save(task);
         }
+        if (task.progressGuard?.reason) { this.enterPause(task, task.progressGuard.reason); return; }
         if (task.pending.length) {
           const call = task.pending[0];
+          if ((effectNames.has(call.toolName) || browserEffectNames.has(call.toolName) || call.toolName === 'writeArtifact') &&
+            task.progressGuard?.input === inputKey(call) && task.progressGuard.repeatedInputs >= 2) {
+            this.enterPause(task, 'repeated_tool'); return;
+          }
           if (call.toolName === 'askUser') {
             try {
               task.question = this.questionFor(task, call); task.status = 'awaiting_input'; this.save(task); return;
@@ -527,6 +593,7 @@ export class TaskRuntime {
                 const action = await browser.prepare(id, call);
                 task = this.store.get(id);
                 if (controller.signal.aborted || task.status === 'cancelled' || this.stopped) return;
+                if (task.pauseRequested) continue;
                 task.approval = action; this.save(task);
               }
               const action = task.approval!;
@@ -556,6 +623,7 @@ export class TaskRuntime {
                 const approval = await prepareEffect(id, call, task.root, this.services.hostEnabled?.() ?? false);
                 task = this.store.get(id); // Do not overwrite permission revocation or cancellation while path I/O awaited.
                 if (task.status === 'cancelled') return;
+                if (task.pauseRequested) continue;
                 task.approval = approval;
               }
               catch (error) {
@@ -666,11 +734,13 @@ export class TaskRuntime {
           }
           this.save(task); continue;
         }
-        if (task.steps >= 12) throw new Error('Reached the 12-step budget. Review progress and start a narrower task.');
+        this.initProgress(task);
+        if (task.steps >= task.progress!.windowStart + task.progress!.windowSize) { this.enterPause(task, 'window'); return; }
         try { await this.compact(task, controller.signal); }
         catch (error) { if (this.interrupted.delete(id)) continue; throw error; }
         if (controller.signal.aborted || this.stopped) return;
         task = this.store.get(id);
+        if (task.pauseRequested) { this.enterPause(task, 'manual'); return; }
         if (task.queuedInput?.some(item => item.mode === 'steer' || (item.mode === 'queue' && task.steps >= (task.queueAfterStep ?? 0)))) continue;
         task.inputBoundary = false;
         task.context = { compactions: task.compactions?.length ?? 0, estimatedTokens: estimateTokens(projectedMessages(task)), keptFrom: task.compactions?.at(-1)?.keptFrom ?? 0 };
@@ -692,6 +762,7 @@ export class TaskRuntime {
         if (!step.calls.length) {
           if (!step.text.trim()) throw new Error('Model returned no answer or tool calls');
           if (task.queuedInput?.some(item => item.mode !== 'followup')) { this.save(task); continue; }
+          if (task.pauseRequested) { this.enterPause(task, 'manual'); return; }
           task.status = 'completed'; this.event(task, 'system', '任务已完成。'); this.save(task);
           const next = task.queuedInput?.find(item => item.mode === 'followup');
           if (next) {
@@ -706,11 +777,12 @@ export class TaskRuntime {
     } catch (error) {
       if (!controller.signal.aborted && !this.stopped) {
         task = this.store.get(id);
+        if (task.pauseRequested && !task.effectStarted && task.status !== 'cancelled') { this.enterPause(task, 'manual'); return; }
         if (task.status !== 'cancelled') {
           task.status = 'failed';
           // Do not expose upstream response bodies, URLs, or credentials in renderer events.
           const message = (error as Error).message;
-          const safe = /^(Configure a model|Reached the 12-step|Model returned)/.test(message) ? message : '模型或工具执行失败。检查连接设置和权限后，新建任务重试。';
+          const safe = /^(Configure a model|Model returned)/.test(message) ? message : '模型或工具执行失败。检查连接设置和权限后，新建任务重试。';
           this.event(task, 'error', safe); this.save(task);
         }
       }
