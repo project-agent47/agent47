@@ -30,7 +30,7 @@ async function result(taskId) {
 async function completed(taskId) { await expect.poll(async () => (await page.evaluate(() => window.agent47.listTasks())).find(t => t.id === taskId)?.status).toBe('completed'); }
 async function nativeText() { return app.evaluate(async ({ BrowserWindow }) => {
   const view = BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL().startsWith('https:'));
-  return view ? view.webContents.executeJavaScript('document.querySelector("#result")?.textContent || ""') : '';
+  return view && !view.webContents.isLoading() ? view.webContents.executeJavaScript('document.querySelector("#result")?.textContent || ""') : '';
 }); }
 try {
   app = await electron.launch({ args: ['.', '--no-sandbox', `--user-data-dir=${data}`], env: { ...process.env, AGENT47_SMOKE: '1' } });
