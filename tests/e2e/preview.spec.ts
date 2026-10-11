@@ -11,6 +11,10 @@ test('pause occupies the decision dock, supplements do not resume, same run cont
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await expect(page.getByLabel('暂停与续跑')).toBeVisible();
   await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('保留同一轮次');
+  await page.getByRole('button', { name: '立即发送', exact: true }).click();
+  await expect(page.getByLabel('授权确认', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('暂停与续跑', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('待发送消息', { exact: true })).toContainText('保留同一轮次');
   await page.getByRole('button', { name: '继续本轮', exact: true }).click();
   await expect(page.locator('.completion-note')).toBeVisible();
   await expect(page.locator('.task-meta')).toContainText('第 1 轮');

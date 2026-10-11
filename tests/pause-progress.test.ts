@@ -79,10 +79,15 @@ it('pause survives actual store reopen without model calls or release of approva
 it('question draft is preserved while paused and cannot be submitted until resumed', async () => {
   const { runtime, store } = await setup(async () => calls({ name: 'askUser', input: { question: 'which?' } }));
   const t = runtime.create('question', 'general'); await wait(() => store.get(t.id).status === 'awaiting_input');
-  const q = store.get(t.id).question!; runtime.pause(t.id);
+  const q = store.get(t.id).question!;
+  runtime.saveQuestionDraft({ taskId: t.id, questionId: q.id, revision: q.revision!, digest: q.digest!, step: 0, expectedVersion: 0,
+    answers: [{ questionId: 'answer', selectedOptionIds: [], customText: 'saved synthetic draft' }] });
+  runtime.pause(t.id);
   expect(store.get(t.id).question?.id).toBe(q.id);
+  expect(store.get(t.id).question?.draft?.answers[0].customText).toBe('saved synthetic draft');
   expect(() => runtime.respondQuestion({ taskId: t.id, questionId: q.id, revision: q.revision!, digest: q.digest!, clientCommandId: randomUUID(), result: 'cancel', answers: [] })).toThrow();
   runtime.resume(t.id); expect(store.get(t.id).status).toBe('awaiting_input');
+  expect(store.get(t.id).question?.draft?.version).toBe(1);
 });
 it('three identical read observations pause; continuation retains counts and permits a new response', async () => {
   let n = 0;

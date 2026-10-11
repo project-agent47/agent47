@@ -163,6 +163,11 @@ const previewBridge: AgentBridge = {
     const task = samples.find(t => t.id === input.taskId)!;
     const item = task.queuedInput?.find(entry => entry.id === input.messageId);
     if (!item) throw new Error('消息已发送或删除。');
+    if (input.action === 'send' && task.status === 'paused') {
+      item.mode = 'steer'; task.pause!.resumeStatus = 'queued'; task.question = undefined;
+      if (task.approval) task.approval.state = 'denied';
+      emit(); return clone(task);
+    }
     task.queuedInput = task.queuedInput!.filter(entry => entry.id !== item.id);
     if (input.action === 'send') { task.events.push({ id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: item.text }); task.status = 'completed'; task.question = undefined; if (task.approval) task.approval.state = 'denied'; }
     emit(); return clone(task);
