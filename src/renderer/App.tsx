@@ -181,7 +181,7 @@ export function App() {
             {task.context && <div className="context-note">上下文预估 {task.context.estimatedTokens.toLocaleString()}（本地保守估计，非供应商 tokens） · 自动压缩 {task.context.compactions} 次 · 原始历史保留</div>}
             {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).some(t => t.fileChanges?.length) && <details className="file-changes"><summary>文件改动与恢复点（写入前自动备份）</summary>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).flatMap(owner => [...(owner.fileChanges ?? [])].reverse().map(change => <div className="snapshot-row" key={`${owner.id}-${change.id}`}><span>{change.path}<small>第 {owner.runNumber ?? 1} 轮 · {change.state === 'restored' ? '已恢复' : change.state === 'cleaned' ? '备份已清理，不能恢复' : '可恢复'}</small></span><button className="secondary small-button" disabled={busy || change.state !== 'saved' || !['completed', 'failed', 'cancelled'].includes(task.status)} onClick={() => {
               setLocalDecision({ title: `恢复 ${change.path}`, detail: '恢复到此次改动前；新建文件将删除，已有文件恢复原文，外部改动会拒绝覆盖。对话和主机/远端操作不回退。', confirmLabel: '确认恢复', confirm: () => bridge.restoreFile({ taskId: owner.id, snapshotId: change.id }) });
-            }}>恢复改动前</button></div>))}<p className="context-note">只覆盖 writeFile / editFile / makeDirectory，不回退聊天、Shell 改动或远端操作。多次修改同一文件请从最近一次恢复。</p>
+            }}>恢复改动前</button>{change.kind !== 'directory' && <button className="text-button" disabled={busy || change.state === 'cleaned'} onClick={() => void run(async () => setWorkspace(await bridge.openFileDiff({ taskId: owner.id, snapshotId: change.id })))}>查看差异</button>}</div>))}<p className="context-note">只覆盖 writeFile / fileEdit / editFile / makeDirectory，不回退聊天、Shell 改动或远端操作。多次修改同一文件请从最近一次恢复。</p>
               {tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id) && t.fileChanges?.some(change => change.state === 'saved')).map(owner => <button className="secondary" disabled={busy || !['completed', 'failed', 'cancelled'].includes(task.status)} key={owner.id} onClick={() => {
                 setLocalDecision({ title: `撤销第 ${owner.runNumber ?? 1} 轮文件改动`, detail: `${owner.root}：${owner.fileChanges!.filter(change => change.state === 'saved').length} 项，按倒序恢复。冲突项及其旧版本保留；不是原子事务，不撤销 Shell 或远端效果。`, confirmLabel: '确认撤销本轮文件', confirm: () => bridge.undoRun(owner.id) });
               }}>撤销第 {owner.runNumber ?? 1} 轮文件改动</button>)}
@@ -228,6 +228,11 @@ export function App() {
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
       <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+        canSelect={!!task && !historical && !task.unknownEffect}
+        selectText={async (tabId, expectedHash, range) => { if (task && !historical) {
+          await bridge.selectWorkspace({ taskId: task.id, tabId, expectedHash, ...range });
+          if (selectedRef.current === task.id) setEditingDecision(true);
+        } }}
         attachMaterial={tabId => { if (task && !historical) void run(() => bridge.attachMaterial({ taskId: task.id, tabId })); }}
         conversationId={task?.conversationId ?? task?.id} grantPage={(tabId, mode) => {
           const tab = workspace.tabs.find(t => t.id === tabId);

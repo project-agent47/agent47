@@ -1,4 +1,39 @@
 import { test, expect } from '@playwright/test';
+test('rendered Markdown selection maps unique source text and attaches without sending', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByRole('button', { name: '打开文件', exact: true }).click();
+  const text = page.locator('.document-markdown p').last();
+  await text.click({ clickCount: 2, position: { x: 25, y: 8 } });
+  await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '让 Agent 修改', exact: true }).click();
+  await expect(page.getByLabel('对话材料引用')).toContainText('选区');
+  await expect(page.locator('.task-meta')).toContainText('第 1 轮');
+});
+test('code selection enters the dock without overwriting draft, sending or granting write access', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('保留我的修改草稿');
+  await page.getByRole('button', { name: /^工作区/ }).click();
+  await page.getByRole('button', { name: '体验代码', exact: true }).click();
+  const editor = page.locator('.monaco-editor textarea').first(); await editor.focus(); await editor.press('ControlOrMeta+A');
+  await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: '让 Agent 修改', exact: true }).click();
+  await expect(page.getByLabel('对话材料引用')).toContainText('选区');
+  await expect(page.getByLabel('对话材料引用')).toContainText('只读引用');
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue('保留我的修改草稿');
+  await expect(page.locator('.task-meta')).toContainText('第 1 轮');
+  await page.screenshot({ path: '.qa/selection-preview.png', animations: 'disabled' });
+});
+test('recorded file diffs open read-only in the right workspace and keep dock compact in dark narrow mode', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByText('文件改动与恢复点（写入前自动备份）', { exact: true }).click();
+  await page.getByRole('button', { name: '查看差异', exact: true }).click();
+  await expect(page.locator('.monaco-diff-editor')).toBeVisible();
+  await expect(page.getByLabel('产物工作区')).toContainText('示例差异，不执行真实文件工具');
+  await expect(page.getByRole('button', { name: '让 Agent 修改', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: '.qa/diff-preview.png', animations: 'disabled' });
+  await page.setViewportSize({ width: 390, height: 844 }); await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 test('pause occupies the decision dock, supplements do not resume, same run continues', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('任务目标').fill('验证安全暂停交互');

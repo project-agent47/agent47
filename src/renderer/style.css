@@ -354,3 +354,6 @@ h1 { font-size: var(--text-lg); }
 .pause-decision small { color:var(--color-muted); font-size:11px; }
 .pause-actions { display:flex; gap:8px; flex-shrink:0; }
 @media (max-width:640px) { .pause-decision { align-items:stretch; flex-direction:column; } .pause-actions { justify-content:flex-end; } }
+.selection-toolbar { display: flex; gap: 8px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--color-border); font-size: 11px; flex-wrap: wrap; }
+.selection-toolbar > span { flex: 1; min-width: 150px; }
+.selection-toolbar small { display: block; color: var(--color-muted); margin-top: 3px; }

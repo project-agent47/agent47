@@ -154,6 +154,14 @@ async function boot(): Promise<void> {
     const input = z.object({ taskId: idSchema, tabId: idSchema }).strict().parse(value);
     return runtime.attachMaterial(input.taskId, await workspace.materialSnapshot(input.tabId));
   });
+  handle('workspace:selection', async value => {
+    const input = z.object({ taskId: idSchema, tabId: idSchema, expectedHash: z.string().regex(/^[a-f0-9]{64}$/), start: z.number().int().nonnegative(), end: z.number().int().positive() }).strict().parse(value);
+    return runtime.attachMaterial(input.taskId, await workspace.selectionMaterial(input.taskId, input.tabId, input.expectedHash, input.start, input.end));
+  });
+  handle('workspace:diff', async value => {
+    const input = z.object({ taskId: idSchema, snapshotId: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(value);
+    return workspace.openDiff(input.taskId, await runtime.fileDiff(input.taskId, input.snapshotId));
+  });
   handle('materials:remove', value => { const input = materialBinding.parse(value); return runtime.removeMaterial(input.taskId, input.materialId); });
   const boundMaterial = (input: z.infer<typeof materialBinding>) => {
     const task = store.get(input.taskId), m = task.materialSnapshots?.[input.materialId];

@@ -8,6 +8,7 @@ interface Snapshot {
   id: string; taskId: string; root: string; path: string; digest: string;
   kind: 'project_write' | 'directory'; before?: string; beforeMode?: number;
   afterHash: string; createdDirectories: string[]; state: 'prepared' | 'applied' | 'restoring' | 'restored' | 'cleaned';
+  after?: string; beforeHash?: string;
 }
 async function atomicText(path: string, text: string, mode = 0o600): Promise<void> {
   const temp = join(dirname(path), `agent47-${crypto.randomUUID()}.tmp`);
@@ -30,7 +31,7 @@ export class FileSnapshots {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     return file;
   }
-  async apply(taskId: string, action: Approval): Promise<{ saved: true; path: string; snapshotId: string; replayVerified?: boolean }> {
+  async apply(taskId: string, action: Approval): Promise<{ saved: true; path: string; snapshotId: string; sha256?: string; editedRanges?: unknown; replayVerified?: boolean }> {
     if (!['project_write', 'directory'].includes(action.kind ?? '') || action.state !== 'approved' || effectDigest(taskId, action) !== action.digest) throw new Error('Approval changed');
     const id = sha256(action.id), file = await this.manifest(taskId, id);
     let snapshot: Snapshot | undefined;
@@ -51,7 +52,7 @@ export class FileSnapshots {
         if ((before === undefined ? null : sha256(before)) !== action.payload?.expectedHash) throw new Error('File changed before snapshot');
       }
       snapshot = { id, taskId, root: action.root!, path, digest: action.digest, kind: action.kind as Snapshot['kind'],
-        before, beforeMode, afterHash: sha256(action.content),
+        before, beforeMode, beforeHash: before === undefined ? undefined : sha256(before), after: action.kind === 'project_write' ? action.content : undefined, afterHash: sha256(action.content),
         createdDirectories: action.kind === 'directory' ? missing : missing.slice(0, -1), state: 'prepared' };
       // This must succeed before ANY project directory creation or file modification.
       await atomicText(file, JSON.stringify(snapshot));
@@ -67,7 +68,14 @@ export class FileSnapshots {
       if (!(await lstat(target)).isDirectory()) throw new Error('Directory target changed');
     }
     snapshot.state = 'applied'; await atomicText(file, JSON.stringify(snapshot));
-    return { saved: true, path: snapshot.path, snapshotId: id, replayVerified };
+    return { saved: true, path: snapshot.path, snapshotId: id, sha256: snapshot.kind === 'project_write' ? snapshot.afterHash : undefined, ...(action.payload?.editedRanges ? { editedRanges: action.payload.editedRanges } : {}), replayVerified };
+  }
+  async diff(taskId: string, id: string) {
+    const snapshot = JSON.parse(await readFile(await this.manifest(taskId, id), 'utf8')) as Snapshot;
+    if (snapshot.id !== id || snapshot.taskId !== taskId || snapshot.kind !== 'project_write' || !['applied', 'restored'].includes(snapshot.state)) throw new Error('请使用尚未清理的文件改动。');
+    if (snapshot.after === undefined) throw new Error('请使用本版本新增的改动；旧备份没有保存写入后正文。');
+    if (sha256(snapshot.after) !== snapshot.afterHash || snapshot.before !== undefined && sha256(snapshot.before) !== snapshot.beforeHash) throw new Error('请检查备份完整性。');
+    return { path: snapshot.path, before: snapshot.before ?? '', after: snapshot.after };
   }
   async restore(taskId: string, id: string): Promise<void> {
     const file = await this.manifest(taskId, id);
@@ -115,7 +123,7 @@ export class FileSnapshots {
     const snapshot = JSON.parse(await readFile(file, 'utf8')) as Snapshot;
     if (snapshot.taskId !== taskId || snapshot.id !== id || !['applied', 'restored', 'cleaned'].includes(snapshot.state)) throw new Error('Snapshot cleanup refused');
     // Keep a small durable tombstone to reconcile interrupted DB acknowledgement.
-    snapshot.before = undefined; snapshot.beforeMode = undefined; snapshot.state = 'cleaned';
+    snapshot.before = undefined; snapshot.after = undefined; snapshot.beforeMode = undefined; snapshot.state = 'cleaned';
     await atomicText(file, JSON.stringify(snapshot));
   }
 }

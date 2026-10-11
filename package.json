@@ -27,6 +27,7 @@
     "test:decisions:live": "node scripts/e2e-decisions-live.mjs",
     "test:workspace:native": "node scripts/e2e-workspace-native.mjs",
     "test:materials:native": "node scripts/e2e-materials-native.mjs",
+    "test:selection:native": "node scripts/e2e-selection-native.mjs",
     "test:pause:native": "node scripts/e2e-pause-native.mjs",
     "test:web-workspace:native": "node scripts/e2e-web-workspace-native.mjs",
     "test:web-context:live": "node scripts/e2e-web-context-live.mjs",

@@ -9,6 +9,11 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
   state.visible = true; return clone();
 }
 export const previewWorkspace = {
+  diff: async (taskId: string) => {
+    const tab = { id: crypto.randomUUID(), name: '差异 · example.ts', kind: 'diff' as const, source: 'diff' as const, taskId,
+      content: 'export const message = "Updated";\n', before: 'export const message = "Original";\n', sha256: '1'.repeat(64), beforeHash: '2'.repeat(64), status: '示例差异，不执行真实文件工具' };
+    state.tabs.push(tab); state.activeId = tab.id; state.visible = true; return clone();
+  },
   material: async (name: string, content: string) => add(name, content, 'file'),
   agentGrant: async (tabId: string, conversationId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => {
     const tab = state.tabs.find(t => t.id === tabId); if (!tab?.url) throw new Error('请选择网页。');

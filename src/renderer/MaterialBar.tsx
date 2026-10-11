@@ -10,8 +10,9 @@ export function MaterialBar({ task, busy, run, open }: { task: TaskView; busy: b
   return <div className="material-bar" aria-label="对话材料引用">
     <div className="material-chips">{(task.materials ?? []).map(m => <span className="material-chip" key={m.id}>
       <button type="button" title={`${m.name} · ${m.sha256} · ${m.bytes} B · ${m.capturedAt}`} onClick={() => void run(async () => open(await bridge.openMaterial({ taskId: task.id, materialId: m.id })))}>{m.name} · {m.sha256.slice(0, 6)}</button>
+      {m.selection && <small title={m.selection.targetPath ? `可修改已授权项目：${m.selection.targetPath}` : '只读选区；可生成新版成果'}>选区 {m.selection.start}–{m.selection.end} · {m.selection.targetPath ? '项目内' : '只读引用'}</small>}
       {states[m.id] !== 'current' && <small>{states[m.id] === 'changed' ? '有新版' : states[m.id] === 'unavailable' ? '源文件不可用' : '待检查'}</small>}
-      <button type="button" disabled={busy} aria-label={`更新引用：${m.name}`} onClick={() => void run(() => bridge.refreshMaterial({ taskId: task.id, materialId: m.id }))}>更新</button>
+      <button type="button" disabled={busy || !!m.selection} title={m.selection ? '请在新版文件重新选择范围' : undefined} aria-label={`更新引用：${m.name}`} onClick={() => void run(() => bridge.refreshMaterial({ taskId: task.id, materialId: m.id }))}>更新</button>
       <button type="button" disabled={busy} aria-label={`移除引用：${m.name}`} onClick={() => void run(() => bridge.removeMaterial({ taskId: task.id, materialId: m.id }))}>×</button>
     </span>)}</div>
     <div className="material-controls"><button type="button" className="text-button" disabled={busy} onClick={() => void run(() => bridge.chooseMaterial(task.id))}>＋选择材料</button>
