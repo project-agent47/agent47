@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { realpath } from 'node:fs/promises';
 import { ProjectStore } from '../src/core/projects';
 import { TaskStore } from '../src/core/store';
 import { TaskRuntime } from '../src/core/runtime';
 import type { TaskView } from '../src/shared/contracts';
 const stores: ProjectStore[] = [];
 afterEach(() => stores.splice(0).forEach(s => s.close()));
-function setup() { const root = realpathSync(mkdtempSync(join(tmpdir(), 'a47-project-test-'))); const s = new ProjectStore(join(root, 'projects.db')); stores.push(s); return { root, s }; }
+function setup() { const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'a47-project-test-'))); const s = new ProjectStore(join(root, 'projects.db')); stores.push(s); return { root, s }; }
 const task = (id = randomUUID()): TaskView => ({ id, goal: '日常任务', skill: 'general', status: 'completed', steps: 1, createdAt: '', updatedAt: '', events: [], artifacts: [] });
 test('project creation is idempotent and new projects grant nothing', () => {
   const { s } = setup(), key = randomUUID(), p = s.create('  周报资料  ', key);
@@ -50,7 +51,9 @@ test('same active canonical directory cannot bind twice; archived is organizatio
   expect(s.update(a.id, revoked.revision, { archived: false }).rootEnabled).toBe(false);
 });
 test('file lists are paged, nonrecursive and hide dot entries; invalid paths fail closed', async () => {
-  const { s, root } = setup(), dir = join(root, 'work'); mkdirSync(dir);
+  const { s, root } = setup(), candidate = join(root, 'work'); mkdirSync(candidate);
+  // Match the native picker/production fs.promises.realpath contract, including Windows DOS aliases.
+  const dir = await realpath(candidate);
   for (let i = 0; i < 205; i++) writeFileSync(join(dir, `item-${String(i).padStart(3, '0')}.md`), 'no automatic model read');
   writeFileSync(join(dir, '.env'), 'synthetic'); mkdirSync(join(dir, 'folder'));
   const p = s.create('files', randomUUID()); s.bind(p.id, 1, dir);
