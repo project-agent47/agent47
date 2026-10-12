@@ -78,7 +78,7 @@ try {
   if (await readFile(file, 'utf8') !== modified || run.fileChanges.length !== 1) throw new Error('Exact selected edit or single snapshot missing');
   if (live && !run.events.some(e => e.kind === 'assistant' && e.text.includes(marker) && e.text.includes('SELECTED_EDIT_OK'))) throw new Error('Real model failed to report actual evidence');
   await expect(page.getByLabel('执行轮次', { exact: true })).toHaveValue(run.id);
-  await page.getByText('文件改动与恢复点（写入前自动备份）', { exact: true }).click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
   await page.getByRole('button', { name: '查看差异', exact: true }).click();
   await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 30000 });
   await expect(page.getByLabel('产物工作区')).toContainText('只读文本差异');

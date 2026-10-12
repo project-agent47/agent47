@@ -17,6 +17,7 @@ import type { Approval } from '../shared/contracts';
 import { validateMaterialSnapshot, type MaterialSnapshot } from '../core/materials';
 import { evidenceView, validateEvidence, type EvidenceSnapshot } from '../core/evidence';
 import type { ToolCall } from '../core/store';
+import { artifactEvidence } from '../core/artifact-evidence';
 
 const sourceSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('artifact'), taskId: z.string().uuid(), artifactId: z.string().min(1).max(128) }).strict(),
@@ -71,7 +72,27 @@ export class Workspace {
   }
   view(): WorkspaceState {
     return { ...this.state, tabs: this.state.tabs.map(({ path: _path, origin: _origin, ...tab }) => ({ ...tab,
+      ...this.artifactSources(tab.id),
       agentGrants: [...this.browserGrants.values()].filter(g => g.tabId === tab.id && tab.url && new URL(tab.url).origin === g.origin).map(({ conversationId, origin, mode }) => ({ conversationId, origin, mode })) })) };
+  }
+  private artifactSources(tabId: string): Pick<WorkspaceState['tabs'][number], 'sources' | 'citationStatus'> {
+    const tab = this.state.tabs.find(t => t.id === tabId);
+    if (tab?.source !== 'artifact' || tab.origin?.kind !== 'artifact') return {};
+    try {
+      const origin = tab.origin;
+      const owner = this.store.get(origin.taskId), artifact = owner.artifacts.find(a => a.id === origin.artifactId);
+      if (!artifact || tab.content === undefined || sha256(tab.content) !== tab.sha256) throw new Error('成果不可用');
+      return { sources: artifactEvidence(artifact, tab.sha256, owner.evidenceSnapshots).map(evidenceView),
+        citationStatus: artifact.evidenceIds === undefined ? 'legacy' : 'bound' };
+    } catch { return { sources: [], citationStatus: 'unavailable' }; }
+  }
+  async openArtifactEvidence(tabId: string, expectedHash: string, sourceId: string) {
+    const tab = this.state.tabs.find(t => t.id === tabId);
+    if (!tab || tab.source !== 'artifact' || tab.origin?.kind !== 'artifact' || tab.sha256 !== expectedHash ||
+      !this.artifactSources(tabId).sources?.some(s => s.id === sourceId)) throw new Error('来源未绑定此成果版本，请回到来源轮次查看。');
+    const source = this.store.get(tab.origin.taskId).evidenceSnapshots?.[sourceId];
+    if (!source) throw new Error('历史证据不可用。');
+    return this.openEvidence(source);
   }
   private conversation(taskId: string) { const task = this.store.get(taskId); return task.conversationId ?? task.id; }
   agentGrant(taskId: string, tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow', expectedURL: string) {

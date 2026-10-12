@@ -43,7 +43,12 @@ export const previewWorkspace = {
   open: async (input: WorkspaceSource, tasks: TaskView[]) => {
     const task = tasks.find(t => t.id === input.taskId)!;
     if (input.kind === 'proposal') return add(task.approval!.name, task.approval!.content, 'proposal', task.id);
-    const a = task.artifacts.find(a => a.id === input.artifactId)!; return add(a.name, a.content, 'artifact', task.id);
+    const a = task.artifacts.find(a => a.id === input.artifactId)!;
+    add(a.name, a.content, 'artifact', task.id);
+    const tab = state.tabs.find(t => t.id === state.activeId)!;
+    tab.sources = (task.sources ?? []).filter(s => a.evidenceIds?.includes(s.id));
+    tab.citationStatus = a.evidenceIds === undefined ? 'legacy' : 'bound';
+    return clone();
   },
   import: async () => add('preview-notes.md', '# 本地文件查看示例\n\n| 能力 | 状态 |\n| --- | --- |\n| 本地查看 | 不自动入模 |\n\n预览不读取真实文件。', 'file'),
   update: async (input: { activeId?: string; closeId?: string; pauseId?: string; width?: number; visible?: boolean; moveId?: string; direction?: -1 | 1 }) => {

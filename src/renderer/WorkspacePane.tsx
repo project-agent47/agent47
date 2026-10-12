@@ -81,7 +81,10 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
             const content = tab.content ?? '', first = content.indexOf(selected);
             if (first < 0 || content.indexOf(selected, first + 1) >= 0) { setRange(undefined); setSelectionHint('跨格式或重复文本，请切换源码精确选区。'); return; }
             setSelectionHint(''); setRange({ start: first, end: first + selected.length });
-          }}><Markdown>{tab.content ?? ''}</Markdown></div>
+          }}><Markdown sources={tab.sources} openSource={sourceId => void run(async () => setState(await bridge.openArtifactEvidence({ tabId: tab.id, expectedHash: tab.sha256, sourceId })))}>{tab.content ?? ''}</Markdown>
+            {tab.citationStatus === 'legacy' && <p className="workspace-note">旧版成果没有保存时来源清单；请使用“查看来源任务”核对，不自动猜测引用。</p>}
+            {tab.citationStatus === 'unavailable' && <p className="workspace-note">成果来源版本不可用；引用未激活，正文仍可查看。</p>}
+          </div>
           : tab.kind === 'web' ? <p className="workspace-note">{tab.paused ? '网页已暂停；刷新会重新联网加载。' : bridge.preview ? '网页示例，不访问该地址；桌面应用在独立原生会话中浏览。' : '网页在独立原生会话中加载，应用 IPC 不进入网页。'}</p>
           : tab.kind === 'html' ? tab.paused ? <p className="workspace-note">页面已停止，点击刷新重新加载。不会重放 Agent 工具。</p> : bridge.preview ? <iframe title={`HTML 预览：${tab.name}`} sandbox="" srcDoc={'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data:; form-action \'none\'">' + tab.content} /> : <p className="workspace-note">隔离页面加载中；应用 IPC 不进入该页面。</p>
           : <div className="unsupported-document"><h3>暂不支持此格式</h3><p>{tab.name} 可以在系统默认查看器打开；不会解析或自动发送给模型。</p></div>}

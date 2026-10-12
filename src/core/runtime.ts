@@ -16,6 +16,7 @@ import type { Approval } from '../shared/contracts';
 import { materialMessage, readMaterial, validateMaterialSnapshot, type MaterialSnapshot } from './materials';
 import { captureEvidence, evidenceView, validateEvidence, evidenceReadInput, readArchivedEvidence } from './evidence';
 import { inputKey, recordObservation } from './progress';
+import { bindArtifactEvidence } from './artifact-evidence';
 
 export interface RuntimeServices {
   projectContext?: (task: TaskRecord) => TaskView['projectContext'];
@@ -706,7 +707,7 @@ export class TaskRuntime {
               const current = this.store.get(id);
               if (this.stopped) return; // Checkpoint still approved; replay verifies the same file.
               task = current;
-              task.artifacts.push(artifact);
+              task.artifacts.push({ ...artifact, evidenceIds: bindArtifactEvidence(artifact.content, task.evidenceSnapshots) });
               if (task.approval) task.approval.state = 'applied';
               this.event(task, 'tool', `已保存 ${artifact.name} · SHA-256 ${artifact.sha256.slice(0, 12)}`);
               this.toolResult(task, call, { saved: true, name: artifact.name, sha256: artifact.sha256 });
