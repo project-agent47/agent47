@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -10,7 +10,7 @@ import { TaskRuntime } from '../src/core/runtime';
 import type { TaskView } from '../src/shared/contracts';
 const stores: ProjectStore[] = [];
 afterEach(() => stores.splice(0).forEach(s => s.close()));
-function setup() { const root = mkdtempSync(join(tmpdir(), 'a47-project-test-')); const s = new ProjectStore(join(root, 'projects.db')); stores.push(s); return { root, s }; }
+function setup() { const root = realpathSync(mkdtempSync(join(tmpdir(), 'a47-project-test-'))); const s = new ProjectStore(join(root, 'projects.db')); stores.push(s); return { root, s }; }
 const task = (id = randomUUID()): TaskView => ({ id, goal: '日常任务', skill: 'general', status: 'completed', steps: 1, createdAt: '', updatedAt: '', events: [], artifacts: [] });
 test('project creation is idempotent and new projects grant nothing', () => {
   const { s } = setup(), key = randomUUID(), p = s.create('  周报资料  ', key);
