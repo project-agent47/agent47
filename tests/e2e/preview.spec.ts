@@ -32,6 +32,22 @@ test('project instructions, pinned versions and @ share the resource interface w
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: '.qa/resources-preview-dark.png', animations: 'disabled' });
 });
+test('followup has exactly one material bar and captures current project instructions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('新建项目', { exact: true }).click(); await page.getByLabel('新项目名称').fill('简报');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await page.getByLabel('任务目标').fill('第一轮简报'); await page.getByLabel('开始任务', { exact: true }).click();
+  await expect(page.getByLabel('继续对话', { exact: true })).toBeVisible();
+  await expect(page.getByText('任务已完成。已结束的任务不会被重新执行。', { exact: true })).toBeVisible();
+  await page.locator('.project-context-editor > summary').click();
+  await page.getByLabel('项目说明', { exact: true }).fill('新轮次用中文简洁回答');
+  await page.getByRole('button', { name: '保存项目说明', exact: true }).click();
+  await page.locator('.project-context-editor > summary').click();
+  await page.getByLabel('继续对话', { exact: true }).fill('第二轮追问'); await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(page.locator('.task-meta')).toContainText('第 2 轮');
+  await expect(page.locator('.composer-dock .material-bar')).toHaveCount(1);
+  await expect(page.locator('.run-project-context')).toContainText('v1');
+});
 test('daily projects organize conversations and scoped file tabs without implicit send', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('新建项目', { exact: true }).click(); await page.getByLabel('新项目名称').fill('日常资料');

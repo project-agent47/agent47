@@ -97,6 +97,7 @@ try {
   await expect.poll(async () => (await tasks()).length).toBe(2); const secondId = (await tasks())[0].id; await done(secondId);
   if (!live) await fixtureIntent(secondId, newer.id, true);
   const second = await done(secondId), r2 = await record(secondId);
+  await expect(page.locator('.composer-dock .material-bar')).toHaveCount(1);
   if (second.runNumber !== 2 || second.projectContext.revision !== current.revision || !r2.authorized.includes(old.id) || !r2.authorized.includes(newer.id) || !JSON.stringify(r2.calls).includes(updated)) throw new Error('New run/version context missing');
   const artifact = second.artifacts.find(a => a.name === 'summary.md');
   if (!artifact?.content.includes(updated)) throw new Error('Actual deliverable evidence missing');
