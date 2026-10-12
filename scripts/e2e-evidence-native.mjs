@@ -30,7 +30,9 @@ try {
   await page.getByRole('button', { name: '＋引用文件材料', exact: true }).click();
   await expect(page.getByLabel('移除待发送材料：notes.md')).toBeVisible();
   await page.getByLabel('任务目标').fill('来源验收：读取引用 notes.md，只返回 FACT 标记，并用 readMaterial 返回的 source.uri 做 Markdown 引用。不要写文件或使用其他工具。');
-  await page.getByLabel('开始任务', { exact: true }).click(); const first = (await tasks())[0]; await done(first.id);
+  await page.getByLabel('开始任务', { exact: true }).click();
+  await expect.poll(async () => (await tasks()).length).toBe(1);
+  const first = (await tasks())[0]; await done(first.id);
   if (!live) {
     await app.evaluate(({ app }, input) => {
       const { DatabaseSync } = process.getBuiltinModule('node:sqlite'), { join } = process.getBuiltinModule('node:path');
