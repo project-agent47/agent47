@@ -9,6 +9,7 @@ function add(name: string, content: string, source: 'file' | 'artifact' | 'propo
   state.visible = true; return clone();
 }
 export const previewWorkspace = {
+  replace: async (next: WorkspaceState) => { Object.assign(state, structuredClone(next)); return clone(); },
   evidence: async (source: EvidenceView) => {
     const existing = state.tabs.find(t => t.evidence?.id === source.id);
     if (existing) state.activeId = existing.id;

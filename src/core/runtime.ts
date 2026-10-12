@@ -18,6 +18,7 @@ import { captureEvidence, evidenceView, validateEvidence, evidenceReadInput, rea
 import { inputKey, recordObservation } from './progress';
 
 export interface RuntimeServices {
+  fileAuthorized?: (task: TaskRecord) => boolean;
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
   skills?: { catalog(): unknown[]; load(id: string, hash?: string): unknown; read(id: string, path: string, hash?: string): Promise<unknown> };
   contextThreshold?: number;
@@ -120,9 +121,9 @@ export class TaskRuntime {
     this.save(task); this.kick();
   }
   list(): TaskView[] {
-    const records = this.store.list(), latest = new Map<string, string>();
+    const records = this.store.views(), latest = new Map<string, string>();
     for (const t of records) if (!latest.has(t.conversationId ?? t.id)) latest.set(t.conversationId ?? t.id, t.id);
-    return records.map(task => ({ ...publicTask(task), latestRunId: latest.get(task.conversationId ?? task.id), draft: this.drafts.get(task.id) }));
+    return records.map(task => ({ ...task, latestRunId: latest.get(task.conversationId ?? task.id), draft: this.drafts.get(task.id) }));
   }
   attachMaterial(id: string, material: MaterialSnapshot, replaceId?: string): TaskView {
     const task = this.store.get(id);
@@ -145,13 +146,13 @@ export class TaskRuntime {
     if (!task.authorizedMaterialIds?.includes(materialId) && !task.queuedInput?.some(q => q.materials?.some(m => m.id === materialId))) delete task.materialSnapshots?.[materialId];
     this.save(task); return publicTask(task);
   }
-  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask', materials: MaterialSnapshot[] = []): TaskView {
+  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask', materials: MaterialSnapshot[] = [], binding?: { originProjectId?: string; rootProjectId?: string; rootProjectRevision?: number }): TaskView {
     if (root && [...this.restoringRoots].some(other => overlappingRoots(root, other))) throw new Error('请等待文件快照恢复完成。');
     if (!goal.trim() || goal.length > 12000) throw new Error('Task goal must contain 1–12000 characters');
     if (materials.length > 10 || materials.reduce((n, m) => n + m.bytes, 0) > 5_000_000 || materials.some(m => m.bytes > 1_000_000 || m.bytes !== Buffer.byteLength(m.content) || sha256(m.content) !== m.sha256)) throw new Error('请使用有效且总计不超过 5 MB 的材料版本。');
     const now = new Date().toISOString();
     const task: TaskRecord = {
-      id: randomUUID(), goal: goal.trim(), skill, root, status: 'queued', createdAt: now, updatedAt: now,
+      id: randomUUID(), goal: goal.trim(), skill, root, ...binding, status: 'queued', createdAt: now, updatedAt: now,
       events: [], artifacts: [], steps: 0, pending: [], messages: [{ role: 'user', content: materialMessage(goal.trim(), materials) }],
       usage: [], runNumber: 1, queuedInput: [], conversationTitle: goal.trim().split('\n')[0].slice(0, 60),
       fileMode: fileMode ?? this.services.fileMode?.() ?? 'ask', hostMode: 'ask', fileChanges: []
@@ -433,7 +434,7 @@ export class TaskRuntime {
       runNumber: (parent.runNumber ?? 1) + 1, usage: [], queuedInput: [], compactions: structuredClone(parent.compactions ?? []),
       conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60),
       materials: structuredClone(parent.materials ?? []), materialSnapshots: structuredClone(parent.materialSnapshots ?? {}),
-      evidenceSnapshots: structuredClone(parent.evidenceSnapshots ?? {}),
+      evidenceSnapshots: structuredClone(parent.evidenceSnapshots ?? {}), originProjectId: parent.originProjectId, rootProjectId: parent.rootProjectId, rootProjectRevision: parent.rootProjectRevision,
       authorizedMaterialIds: [...new Set([...(parent.authorizedMaterialIds ?? []), ...materials.map(m => m.id), ...(includeQueued ? (parent.queuedInput ?? []).flatMap(q => (q.materials ?? []).map(m => m.id)) : [])])],
       fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
@@ -634,6 +635,7 @@ export class TaskRuntime {
           if (effectNames.has(call.toolName)) {
             if (task.approval?.id !== call.toolCallId) {
               try {
+                if (call.toolName !== 'writeArtifact' && this.services.fileAuthorized?.(task) === false) throw new Error('请重新授权项目目录，并在新会话执行；旧动作不能改换目标。');
                 const approval = await prepareEffect(id, call, task.root, this.services.hostEnabled?.() ?? false);
                 task = this.store.get(id); // Do not overwrite permission revocation or cancellation while path I/O awaited.
                 if (task.status === 'cancelled') return;
@@ -656,6 +658,7 @@ export class TaskRuntime {
             if (effectDigest(id, action) !== action.digest) throw new Error('Approval payload changed');
             try {
               let value: unknown;
+              if (call.toolName !== 'writeArtifact' && this.services.fileAuthorized?.(task) === false) throw new Error('请重新授权项目目录；旧动作不能继续派发。');
               if (action.kind === 'project_write' || action.kind === 'directory') {
                 value = this.services.snapshots ? await this.services.snapshots.apply(id, action) : await applyProjectWrite(id, action);
               }
@@ -738,7 +741,10 @@ export class TaskRuntime {
                 const source = this.evidence(id, sourceId);
                 value = readArchivedEvidence(source, call.input);
               } else if (call.toolName === 'readMaterial') value = readMaterial(task.materialSnapshots ?? {}, task.authorizedMaterialIds ?? [], call.input);
-              else value = await readTool(task.root, call.toolName, call.input);
+              else {
+                if (this.services.fileAuthorized?.(task) === false) throw new Error('请重新授权项目目录，并使用新会话。');
+                value = await readTool(task.root, call.toolName, call.input);
+              }
               if (controller.signal.aborted || this.stopped) return;
               const loadedSkills = task.loadedSkills, skillPins = task.skillPins;
               task = this.store.get(id);

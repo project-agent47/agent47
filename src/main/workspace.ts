@@ -256,9 +256,22 @@ export class Workspace {
     this.browserSnapshots.delete(data.tabId); this.changed(); return value;
   }
   private persist() {
-    const body = JSON.stringify(this.state);
-    const op = this.writes.then(async () => { await writeFile(this.path + '.tmp', body, { mode: 0o600 }); await rename(this.path + '.tmp', this.path); });
+    const body = JSON.stringify(this.state), path = this.path;
+    const op = this.writes.then(async () => { await writeFile(path + '.tmp', body, { mode: 0o600 }); await rename(path + '.tmp', path); });
     this.writes = op.catch(() => {}); return op;
+  }
+  async switchFile(path: string) {
+    await this.writes; await this.layouts;
+    this.dispose(); this.browserGrants.clear(); this.browserSnapshots.clear(); this.captures.clear();
+    for (const tab of this.state.tabs) if (tab.kind === 'web') { tab.paused = true; tab.status = '切换项目后暂停；刷新才重新联网'; }
+    await this.persist();
+    const previous = this.state, previousPath = this.path;
+    this.path = path; this.state = { tabs: [], width: 440, visible: false };
+    try { await this.start(); } catch (e) { this.path = previousPath; this.state = previous; throw e; }
+    this.changed(); return this.view();
+  }
+  async openProjectPath(root: string, path: string) {
+    return this.add(await this.fromFile(await safeProjectPath(root, path)));
   }
   private async add(tab: Omit<SavedTab, 'id'>) {
     const existing = this.state.tabs.find(t => t.sha256 === tab.sha256 && t.beforeHash === tab.beforeHash && t.evidence?.id === tab.evidence?.id && t.name === tab.name && t.source === tab.source && t.taskId === tab.taskId &&

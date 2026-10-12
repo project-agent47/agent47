@@ -1,5 +1,12 @@
 # Current workstate
 
+- Current base master f270873: PR12 source evidence and PR13 Windows async task-ID harness repair merged in prior increment; final master four CI succeeded.
+- Active P1a branch feat/local-project-entry. Owner approved implementation for daily-work automation/intelligence, not a coding IDE or scheduler. Independent PR required; do not auto-merge new increment.
+- P1a lightweight project organization, reusable folder authorization, scoped file/artifact viewer and conversation navigation. See docs/local-project-entry.md for actual contracts, migration and exclusions.
+- Project membership never rewrites execution root. Directory revocation fences old bindings; host/browser trust and conversation context are not inherited. Archived projects preserve data/permissions unless explicitly revoked.
+- TaskStore schema2 derived task_views avoids repeated archive hydration for lists, but cold startup still validates all checkpoints. Consistent schema1 backup and first-project backup; old runtime fails closed on schema2. Missing projects.db with checkpoint binding fails closed.
+- Final review fixed mobile dock crowding by moving membership into header menu, and archived-root restore conflict. Native fixture and true DeepSeek (3 + 1 steps) passed; final CI evidence pending PR. P1b project instructions/fixed materials/@ are not implemented.
+
 - Master e747d36: owner-authorized self-review/merge of PR #11 complete after repeated build/lint183unit/native selection; exact master workflow38152636663 succeeded.
 - Active R1 branch feat/source-evidence-workspace; owner approved source evidence/clickable material closure. Submit an independent PR; do not merge this new increment automatically.
 - R1 actual successful read receipts only, bounded immutable SQLite body with checkpoint pointers; Markdown citation buttons bind current conversation IDs, right-side offline readonly observation. Explicit live URL opening is separate. Built-in readEvidence allows bounded historical re-read after compaction, never fresh observation or expanded permissions. See docs/source-evidence.md and native/material/browser evidence harnesses; final validation pending.
