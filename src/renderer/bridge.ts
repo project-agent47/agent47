@@ -74,6 +74,7 @@ const previewTouchContext = (c: ProjectContext, expected: number) => {
   c.revision++; previewProjects.find(p => p.id === c.projectId)!.revision++; emit();
 };
 samples[1].events.push({ id: 'source-demo', at: now, kind: 'assistant', text: '示例来源：[查看示例证据](agent47-source:sffffffffffffffff)。无法核对的标记会显示为 [未读取引用](agent47-source:s0000000000000000)，不会变成可点击来源。' });
+samples[1].artifacts.push({ id: 'source-brief', name: '带来源的简报.md', content: '# 示例简报\n\n[核对材料原文](agent47-source:sffffffffffffffff)\n\n[未知引用](agent47-source:s0000000000000000)\n\n示例数据，不调用模型。', sha256: '0'.repeat(64), evidenceIds: [sampleSource.id] });
 const previewBridge: AgentBridge = {
   preview: true,
   projectContext: async id => clone(previewContext(id)),
@@ -141,6 +142,12 @@ const previewBridge: AgentBridge = {
   openEvidence: async input => {
     const source = samples.find(t => t.id === input.taskId)?.sources?.find(s => s.id === input.sourceId);
     if (!source) throw new Error('没有实际读取的来源记录。'); return previewWorkspace.evidence(source);
+  },
+  openArtifactEvidence: async input => {
+    const tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
+    const source = tab?.sha256 === input.expectedHash ? tab.sources?.find(s => s.id === input.sourceId) : undefined;
+    if (!source) throw new Error('来源未绑定此成果版本。');
+    return previewWorkspace.evidence(source);
   },
   selectWorkspace: async input => {
     const task = samples.find(t => t.id === input.taskId)!, tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
@@ -268,7 +275,7 @@ const previewBridge: AgentBridge = {
       parent.queuedInput ??= []; parent.queuedInput.push({ id: input.clientMessageId, text: input.text, mode: input.mode, materials: parent.materials?.filter(m => input.materialIds?.includes(m.id)) }); emit(); return clone(parent);
     }
     const task: TaskView = { ...clone(parent), id: crypto.randomUUID(), goal: input.text, conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60), conversationId: parent.conversationId ?? parent.id, parentRunId: parent.id, runNumber: (parent.runNumber ?? 1) + 1,
-      status: 'completed', approval: undefined, artifacts: [], steps: 1, usage: [], events: [...parent.events,
+      status: 'completed', approval: undefined, artifacts: [], fileChanges: [], undo: undefined, steps: 1, usage: [], events: [...parent.events,
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text },
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '## 继续讨论\n\n这是**多轮交互示例**，没有调用模型。\n\n| 能力 | 状态 |\n|---|---|\n| Markdown | 示例渲染 |\n| 工具 | 不执行 |' }] };
     const projectId = memberships.get(parent.conversationId ?? parent.id);

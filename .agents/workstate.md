@@ -1,5 +1,10 @@
 # Current workstate
 
+- P1c local signoff:227unit/22files,27UI,build/lint, nativechanges/selection/evidence/resources, design42pairs min4.70, isolationfixture, fullaudit0. Real Electron+DeepSeek Linux3steps passed2026-10-12T06:02:10.545Z: actualread/write/citedartifact,diff,source deletion/restart,archivedcitation,draftpreservation,zero extra modelrequests,UIrestore. Onlydirectorypickstub,model/tool/IPC/DBnotfixtures. Final subsequent edits were preview-only Run fileChanges reset and regression assertions; no repeated paidcalls. PR/head CI pending; master333 unchanged. Record failed harness attempts honestly; not production-rule relaxation.
+
+- Active owner-approved P1c: feat/run-changes-artifact-sources off master333d4ce. Header run-changes entry/scoped existing snapshots+artifacts projection, frozen save-time artifact receipt IDs and trusted tab/hash source IPC implemented; no new library/extensions/workflow/billing. Legacy artifacts remain unbound, source-task entry preserved. Contract and scenario roadmap:docs/run-changes-artifact-sources.md. New increment must be independent PR, not auto-merged. Validation still in progress; do not claim pass from old P1b.
+- Previous PR15 review completed and merged333d4ced8fd704fb9f4e759712a822e8b6ba54e8, masterCI38208127446 all four pass;221unit/25UI. Older review-in-progress bullets below are historical.
+
 - Owner-approved PR15 review/merge in progress. P1b final implementation ee88e57 passed220unit/25UI, native resources and realDeepSeek Linux2+3; CI38206807479 allfourSUCCESS. Integration review adds schema2 missing-context-table failclosed guard plus regression; no feature expansion or new paidmodel calls. Merge only after exact newhead fourCI pass; then verify master CI.
 
 - Current master ee69dc3e89b36c233b4d0631baf1251d04aeb149: owner-approved PR14 self-reviewed/merged; fresh207unit/build/lint/native Project fixture and master CI38204678037 all four success.

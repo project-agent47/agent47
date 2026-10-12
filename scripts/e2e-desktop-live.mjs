@@ -89,7 +89,8 @@ try {
   const body = await readFile(saved[0], 'utf8');
   const digest = createHash('sha256').update(body).digest('hex');
   if (body !== pending.approval.content || digest !== done.artifacts[0].sha256) throw new Error('Saved bytes differ from reviewed content');
-  await page.locator('.artifact-row').click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
+  await page.getByLabel('本轮变动与恢复').locator('.artifact-row').click();
   await expect(page.getByLabel('产物工作区')).toBeVisible();
   await expect(page.getByLabel('产物工作区')).toContainText(markerA);
   await expect(page.getByLabel('产物工作区')).toContainText(markerB);
@@ -127,7 +128,8 @@ try {
   await page.getByRole('button', { name: '批准创建', exact: true }).click();
   const htmlDone = await waitState(htmlTask.id, ['completed']);
   if (htmlDone.artifacts.length !== 1 || htmlDone.artifacts[0].content !== htmlPending.approval.content) throw new Error('HTML artifact differs from proposal');
-  await page.locator('.artifact-row').filter({ hasText: 'demo.html' }).click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
+  await page.getByLabel('本轮变动与恢复').locator('.artifact-row').filter({ hasText: 'demo.html' }).click();
   await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.filter(v => v.webContents?.getURL().startsWith('agent47-document:') && v.getVisible()).length)).toBe(1);
   const documentId = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].contentView.children.find(v => v.webContents?.getURL().startsWith('agent47-document:') && v.getVisible()).webContents.id);
   await expect.poll(() => app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('document.body.textContent'), documentId)).toContain(htmlMarker);

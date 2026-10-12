@@ -46,7 +46,7 @@ try {
   report.cases.push({ name: 'real DeepSeek edits existing file, writes missing governance parent and creates empty directory; shell disabled; zero approval clicks', snapshots: 3, passed: true });
   await app.close(); await launch();
   await page.locator('.recent-item').first().click();
-  await page.getByText('文件改动与恢复点（写入前自动备份）', { exact: true }).click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
   await page.screenshot({ path: '.qa/permissions-desktop.png', fullPage: true, animations: 'disabled' });
   // Restore via the actual UI after a real Electron restart.
   const row = path => page.locator('.snapshot-row').filter({ has: page.locator('span', { hasText: path }) });

@@ -10,6 +10,7 @@ import { Workspace } from '../src/main/workspace';
 import { artifactPath, sha256 } from '../src/core/tools';
 import { captureEvidence, type EvidenceSnapshot } from '../src/core/evidence';
 import { browserSnapshotScript } from '../src/shared/browser-tools';
+import { bindArtifactEvidence } from '../src/core/artifact-evidence';
 let root: string, store: TaskStore, workspace: Workspace;
 async function browserSetup() {
   const taskId = randomUUID(), now = new Date().toISOString();
@@ -174,6 +175,40 @@ it('library selections stay reference-only even if user project overlaps the art
   await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), artifact.content);
   const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
   expect((await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5)).selection).toEqual({ start: 0, end: 5 });
+});
+it('artifact citations bind owner, saved hash and receipts across workspace restart', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString();
+  const task: import('../src/core/store').TaskRecord = { id: taskId, goal: 'Brief', skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [], messages: [], pending: [] };
+  const { source } = captureEvidence(task, { toolName: 'readFile', toolCallId: 'source', input: {} }, { content: 'FROZEN EVIDENCE', path: 'removed.md', sha256: sha256('FROZEN EVIDENCE') }) as { source: EvidenceSnapshot };
+  const content = `[核对](${source.uri}) [无效](agent47-source:s0000000000000000)`;
+  const artifact = { id: 'brief', name: 'brief.md', content, sha256: sha256(content), evidenceIds: bindArtifactEvidence(content, task.evidenceSnapshots) };
+  task.artifacts.push(artifact); store.save(task);
+  await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), content);
+  const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
+  expect(tab.sources?.map(s => s.id)).toEqual([source.id]); expect(tab.citationStatus).toBe('bound');
+  const material = await workspace.captureResource({ kind: 'artifact', taskId, artifactId: artifact.id });
+  material.frozen = true;
+  const pinnedView = await workspace.openMaterial(material);
+  expect(pinnedView.tabs.find(t => t.id === pinnedView.activeId)?.sources?.map(s => s.id)).toEqual([source.id]);
+  await expect(workspace.openArtifactEvidence(tab.id, '0'.repeat(64), source.id)).rejects.toThrow('版本');
+  await expect(workspace.openArtifactEvidence(tab.id, tab.sha256, 's0000000000000000')).rejects.toThrow('版本');
+  const restarted = new Workspace(join(root, 'workspace.json'), store, join(root, 'artifacts'), () => undefined);
+  await restarted.start();
+  const state = await restarted.openArtifactEvidence(tab.id, tab.sha256, source.id);
+  expect(state.tabs.find(t => t.id === state.activeId)).toMatchObject({ content: 'FROZEN EVIDENCE', source: 'evidence' });
+  expect(store.get(taskId).steps).toBe(0);
+  const imported = (await importFile('copied.md', content)).tabs.at(-1)!;
+  expect(imported.sources).toBeUndefined();
+  await expect(workspace.openArtifactEvidence(imported.id, imported.sha256, source.id)).rejects.toThrow();
+});
+it('legacy artifact does not infer sources from unbound IDs', async () => {
+  const taskId = randomUUID(), at = new Date().toISOString(), content = '[假](agent47-source:sffffffffffffffff)';
+  const artifact = { id: 'legacy', name: 'legacy.md', content, sha256: sha256(content) };
+  store.save({ id: taskId, goal: 'Legacy', skill: 'general', status: 'completed', createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [artifact], messages: [], pending: [] });
+  await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), content);
+  const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
+  expect(tab.citationStatus).toBe('legacy'); expect(tab.sources).toEqual([]);
+  await expect(workspace.openArtifactEvidence(tab.id, tab.sha256, 'sffffffffffffffff')).rejects.toThrow();
 });
 it('opens exact historical evidence without loading source paths or networking, persists and rejects refresh or selection', async () => {
   const id = randomUUID(), at = new Date().toISOString();

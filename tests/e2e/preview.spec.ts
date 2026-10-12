@@ -94,6 +94,23 @@ test('known citations open historical excerpts, invalid IDs stay inert, sources 
   await expect(page.getByLabel('来源证据版本与范围')).toBeVisible();
   await page.screenshot({ path: '.qa/evidence-preview-dark-narrow.png', animations: 'disabled' });
 });
+test('run changes entry opens bounded scope and artifact citations preserve dock drafts', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByLabel('继续对话', { exact: true }).fill('保持简报修改草稿');
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
+  const changes = page.getByLabel('本轮变动与恢复', { exact: true });
+  await expect(changes).toHaveAttribute('open', '');
+  await expect(changes).toContainText('example.ts');
+  await expect(page.getByLabel('变动轮次范围')).toHaveValue('run');
+  await page.getByLabel('变动轮次范围').selectOption('conversation');
+  await changes.getByRole('button', { name: /带来源的简报/ }).click();
+  const doc = page.locator('.document-markdown');
+  await expect(doc.getByText('[无效来源引用]', { exact: true })).toBeVisible();
+  await doc.getByRole('button', { name: /^核对材料原文/ }).click();
+  await expect(page.getByLabel('来源证据版本与范围')).toContainText('100–165');
+  await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue('保持简报修改草稿');
+  await page.screenshot({ path: '.qa/run-changes-preview.png', animations: 'disabled' });
+});
 test('rendered Markdown selection maps unique source text and attaches without sending', async ({ page }) => {
   await page.goto('/'); await page.locator('.task-row').nth(1).click();
   await page.getByRole('button', { name: '打开文件', exact: true }).click();
@@ -120,7 +137,7 @@ test('code selection enters the dock without overwriting draft, sending or grant
 });
 test('recorded file diffs open read-only in the right workspace and keep dock compact in dark narrow mode', async ({ page }) => {
   await page.goto('/'); await page.locator('.task-row').nth(1).click();
-  await page.getByText('文件改动与恢复点（写入前自动备份）', { exact: true }).click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
   await page.getByRole('button', { name: '查看差异', exact: true }).click();
   await expect(page.locator('.monaco-diff-editor')).toBeVisible();
   await expect(page.getByLabel('产物工作区')).toContainText('示例差异，不执行真实文件工具');
@@ -189,7 +206,23 @@ test('stable conversation title and explicit latest-run navigation preserve hist
   await page.getByRole('button', { name: '回到当前轮次', exact: true }).click();
   await expect(page.getByLabel('继续对话', { exact: true })).toBeVisible();
   await expect(page.getByText('第 2 轮', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
+  await expect(page.getByLabel('本轮变动与恢复')).toContainText('本轮还没有已记录');
+  await page.getByLabel('变动轮次范围').selectOption('conversation');
+  await expect(page.getByLabel('本轮变动与恢复')).toContainText('example.ts');
+  await page.getByLabel('执行轮次', { exact: true }).selectOption({ label: '第 1 轮 · 已完成' });
+  await expect(page.getByLabel('变动轮次范围')).toHaveValue('run');
   await page.screenshot({ path: '.qa/materials-preview.png', animations: 'disabled' });
+});
+test('right artifact source owner does not follow a different selected conversation', async ({ page }) => {
+  await page.goto('/'); await page.locator('.task-row').nth(1).click();
+  await page.getByRole('button', { name: '打开本轮变动', exact: true }).click();
+  await page.getByLabel('本轮变动与恢复').getByRole('button', { name: /带来源的简报/ }).click();
+  await page.locator('.recent-nav').getByRole('button', { name: /整理 Agent47/ }).click();
+  const title = await page.locator('.task-title h1').innerText();
+  await page.locator('.document-markdown').getByRole('button', { name: /^核对材料原文/ }).click();
+  await expect(page.getByLabel('来源证据版本与范围')).toContainText('示例材料.md');
+  await expect(page.locator('.task-title h1')).toHaveText(title);
 });
 test('web Agent grants use the bottom dock and can be revoked without another message', async ({ page }) => {
   await page.goto('/');
@@ -254,7 +287,7 @@ test('approval, inspector, artifact split workspace, source and download', async
   await page.getByRole('button', { name: '批准创建' }).click();
   await expect(page.locator('.task-title .status')).toHaveText('已完成');
   await page.getByRole('button', { name: '资源库', exact: true }).click();
-  await page.locator('.artifact-card .resource-open').click();
+  await page.locator('.artifact-card').filter({ hasText: 'desktop-checklist.md' }).locator('.resource-open').click();
   await expect(page.getByLabel('产物工作区')).toBeVisible();
   await expect(page.locator('.document-markdown h1')).toContainText('Agent47');
   const download = page.waitForEvent('download');
@@ -262,7 +295,7 @@ test('approval, inspector, artifact split workspace, source and download', async
   expect((await download).suggestedFilename()).toBe('desktop-checklist.md');
   await page.getByLabel('收起工作区').click();
   await expect(page.getByLabel('产物工作区')).not.toBeVisible();
-  await page.locator('.artifact-card .resource-open').click();
+  await page.locator('.artifact-card').filter({ hasText: 'desktop-checklist.md' }).locator('.resource-open').click();
   await page.getByRole('button', { name: '查看来源任务' }).click();
   await expect(page.locator('.task-title h1')).toHaveText(/整理 Agent47/);
 });
