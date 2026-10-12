@@ -1,4 +1,32 @@
 import { test, expect } from '@playwright/test';
+test('daily projects organize conversations and scoped file tabs without implicit send', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('新建项目', { exact: true }).click(); await page.getByLabel('新项目名称').fill('日常资料');
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
+  await expect(page.locator('.project-controls')).toContainText('日常资料');
+  await expect(page.locator('.task-row')).toHaveCount(0);
+  await expect(page.locator('.subtle-count')).toHaveText('0');
+  await expect(page.locator('.task-totals')).toHaveText('');
+  await page.getByText('项目设置', { exact: true }).click();
+  await page.getByRole('button', { name: '选择项目目录', exact: true }).click();
+  await page.getByRole('button', { name: '确认项目目录授权', exact: true }).click();
+  await expect(page.locator('.project-root')).toContainText('日常工作示例');
+  await page.getByText('项目设置', { exact: true }).click();
+  await page.getByRole('button', { name: '项目文件与成果', exact: true }).click();
+  await page.getByLabel('项目文件与成果', { exact: true }).getByRole('button', { name: /周报\.md/ }).click();
+  await expect(page.locator('.document-markdown')).toContainText('日常工作示例');
+  await expect(page.locator('.task-row')).toHaveCount(0);
+  await page.getByLabel('任务目标').fill('保留本项目新任务草稿');
+  await page.screenshot({ path: '.qa/projects-preview-light.png', animations: 'disabled' });
+  await page.locator('.project-nav').getByRole('button', { name: '全部会话', exact: true }).click();
+  await expect(page.getByRole('tab', { name: '周报.md', exact: true })).toHaveCount(0);
+  await page.locator('.project-nav').getByRole('button', { name: '日常资料', exact: true }).click();
+  await expect(page.getByLabel('任务目标')).toHaveValue('保留本项目新任务草稿');
+  await expect(page.getByRole('tab', { name: '周报.md', exact: true })).toBeVisible();
+  await page.getByLabel('切换深色模式').click(); await page.setViewportSize({ width: 800, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: '.qa/projects-preview-dark.png', animations: 'disabled' });
+});
 test('known citations open historical excerpts, invalid IDs stay inert, sources do not consume drafts', async ({ page }) => {
   await page.goto('/'); await page.locator('.task-row').nth(1).click();
   await page.getByLabel('继续对话', { exact: true }).fill('保留来源审阅草稿');

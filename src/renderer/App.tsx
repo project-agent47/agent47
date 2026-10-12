@@ -6,6 +6,9 @@ import { Markdown } from './Markdown';
 import { ConsentPanel, DecisionPanel, MessageComposer, type LocalDecision } from './DecisionPanel';
 import { WorkspacePane } from './WorkspacePane';
 import { MaterialBar } from './MaterialBar';
+import { ProjectControls } from './ProjectControls';
+import { ProjectBrowser } from './ProjectBrowser';
+import type { ProjectState } from '../shared/contracts';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
 const statusLabels: Record<TaskView['status'], string> = {
@@ -28,6 +31,11 @@ function time(value: string) { return new Date(value).toLocaleTimeString('zh-CN'
 
 export function App() {
   const [tasks, setTasks] = useState<TaskView[]>([]);
+  const [projectState, setProjectState] = useState<ProjectState>({ projects: [] });
+  const [newProject, setNewProject] = useState(false), [projectName, setProjectName] = useState('');
+  const project = projectState.projects.find(p => p.id === projectState.currentId);
+  const projectDrafts = useRef<Record<string, string>>({});
+  const projectMaterialDrafts = useRef<Record<string, { ticket: string; material: import('../shared/contracts').MaterialView }[]>>({});
   const [page, setPage] = useState<Page>('home');
   const [selected, setSelected] = useState<string>();
   const [selectionLoaded, setSelectionLoaded] = useState(bridge.preview);
@@ -64,9 +72,8 @@ export function App() {
   useEffect(() => { if (selectionLoaded && !bridge.preview) void bridge.rememberRun(selected).catch(() => setError('未能保存打开位置；任务记录仍保留。')); }, [selected, selectionLoaded]);
   useEffect(() => { if (!needsDecision) setEditingDecision(false); }, [needsDecision]);
   const pending = tasks.filter(t => t.status === 'awaiting_approval').length;
-  const active = tasks.filter(t => ['running', 'queued'].includes(t.status)).length;
   const refresh = async () => {
-    try { setTasks(await bridge.listTasks()); setConnection(await bridge.provider()); setExtensions(await bridge.listSkills()); setWorkspace(await bridge.workspaceView()); const execution = await bridge.executionSettings(); setHostEnabled(execution.hostExecution); setFileMode(execution.fileMode ?? 'snapshot'); }
+    try { setTasks(await bridge.listTasks()); setProjectState(await bridge.projects()); setConnection(await bridge.provider()); setExtensions(await bridge.listSkills()); setWorkspace(await bridge.workspaceView()); const execution = await bridge.executionSettings(); setHostEnabled(execution.hostExecution); setFileMode(execution.fileMode ?? 'snapshot'); }
     catch { setError('未能加载本地任务。请检查应用存储，不要删除原有数据。'); }
   };
   useEffect(() => { void refresh(); return bridge.onChange(() => void refresh()); }, []);
@@ -90,15 +97,29 @@ export function App() {
     event.preventDefault();
     if (!goal.trim() || busy) return;
     void run(async () => {
-      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: folder?.id, materialTickets: initialMaterials.map(m => m.ticket) });
+      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: project ? undefined : folder?.id, projectId: project?.id, materialTickets: initialMaterials.map(m => m.ticket) });
       setSelected(created.id); setGoal(''); setInitialMaterials([]); setInspector(false);
     });
   };
   const go = (next: Page) => { setPage(next); setSelected(undefined); setError(''); };
-  const open = (id: string) => { setPage('home'); setSelected(id); setInspector(false); setError(''); };
+  const switchProject = async (id?: string) => {
+    projectDrafts.current[projectState.currentId ?? ''] = goal;
+    projectMaterialDrafts.current[projectState.currentId ?? ''] = initialMaterials;
+    const result = await bridge.switchProject(id); setProjectState(result.state); setWorkspace(result.workspace);
+    setGoal(projectDrafts.current[id ?? ''] ?? ''); setFolder(undefined);
+    setInitialMaterials(projectMaterialDrafts.current[id ?? ''] ?? []); setSelected(result.lastRun); setPage('home'); setInspector(false);
+  };
+  const open = (id: string) => {
+    const target = tasks.find(t => t.id === id);
+    if (target && target.projectId !== projectState.currentId) void run(async () => { await switchProject(target.projectId); setSelected(id); });
+    else { setPage('home'); setSelected(id); setInspector(false); setError(''); }
+  };
   const setArtifact = (value: { task: TaskView; artifact: Artifact }) => void run(async () => setWorkspace(await bridge.workspaceOpen({ kind: 'artifact', taskId: value.task.id, artifactId: value.artifact.id })));
   const latest = tasks.filter((t, index) => tasks.findIndex(other => (other.conversationId ?? other.id) === (t.conversationId ?? t.id)) === index);
-  const visible = latest.filter(t => (title(t) + ' ' + t.goal).toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
+  const scopedLatest = latest.filter(t => !project || t.projectId === project.id);
+  const scopedActive = scopedLatest.filter(t => ['running', 'queued'].includes(t.status)).length;
+  const scopedPending = scopedLatest.filter(t => t.status === 'awaiting_approval').length;
+  const visible = scopedLatest.filter(t => (title(t) + ' ' + t.goal).toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
 
   return <div className={selected ? 'app task-open' : 'app'}>
     <aside className="sidebar">
@@ -109,8 +130,14 @@ export function App() {
         <button className={page === 'artifacts' ? 'nav active' : 'nav'} onClick={() => go('artifacts')}><Layers size={18} />成果库</button>
         <button className={page === 'capabilities' ? 'nav active' : 'nav'} onClick={() => go('capabilities')}><ShieldCheck size={18} />能力与边界</button>
       </nav>
-      <div className="sidebar-section"><span>最近会话</span><span className="tiny">{latest.length}</span></div>
-      <div className="recent-nav">{latest.slice(0, 7).map(t => <button key={t.id} className={t.id === selected ? 'recent-item selected' : 'recent-item'} onClick={() => open(t.id)}>
+      <div className="sidebar-section"><span>工作项目</span><button className="text-button" aria-label="新建项目" onClick={() => setNewProject(!newProject)}>＋</button></div>
+      {newProject && <form className="project-create" onSubmit={e => { e.preventDefault(); if (projectName.trim()) void run(async () => { const p = await bridge.createProject({ name: projectName, clientRequestId: crypto.randomUUID() }); setNewProject(false); setProjectName(''); await switchProject(p.id); }); }}><input aria-label="新项目名称" placeholder="例如：家庭资料、周报、旅行" maxLength={96} value={projectName} onChange={e => setProjectName(e.target.value)} /><button className="secondary small-button" disabled={busy || !projectName.trim()}>创建项目</button></form>}
+      <div className="project-nav" aria-label="工作项目列表"><button className={!project ? 'recent-item selected' : 'recent-item'} onClick={() => void run(() => switchProject())}>全部会话</button>
+        {projectState.projects.filter(p => !p.archived).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)).map(p => <button key={p.id} className={p.id === project?.id ? 'recent-item selected' : 'recent-item'} title={p.name} onClick={() => void run(() => switchProject(p.id))}>{p.pinned ? '置顶 · ' : ''}{p.name}</button>)}
+        {projectState.projects.some(p => p.archived) && <details><summary>已归档</summary>{projectState.projects.filter(p => p.archived).map(p => <button className="recent-item" key={p.id} onClick={() => void run(() => switchProject(p.id))}>{p.name}</button>)}</details>}
+      </div>
+      <div className="sidebar-section"><span>{project ? '项目会话' : '最近会话'}</span><span className="tiny">{scopedLatest.length}</span></div>
+      <div className="recent-nav">{scopedLatest.slice(0, 20).map(t => <button key={t.id} className={t.id === selected ? 'recent-item selected' : 'recent-item'} onClick={() => open(t.id)}>
         <span className={`task-dot ${t.status}`} /><span>{title(t)}</span>
       </button>)}{!tasks.length && <p className="sidebar-empty">你的第一个任务会出现在这里。</p>}</div>
       <div className="sidebar-bottom">
@@ -128,14 +155,15 @@ export function App() {
       {error && <div className="error-banner" role="alert"><span>{error}</span><button className="icon-button" onClick={() => setError('')} aria-label="关闭错误提示"><X size={16} /></button></div>}
       <div className="shell-body">
       <main className={selected ? 'content task-content' : 'content'}>
+        {project && <ProjectControls key={project.id} project={project} busy={busy} run={run} />}
         {page === 'home' && !task && <div className="home page-enter">
-          <div className="home-heading"><div><h1>Agentic Workbench</h1><p>DeepSeek · 本地任务、文件与 Skills</p></div></div>
+          <div className="home-heading"><div><h1>{project ? project.name : 'Agentic Workbench'}</h1><p>交办日常工作：整理、研究、写作与办公 · DeepSeek</p></div>{project && <button className="secondary small-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceUpdate({ visible: true })))}>项目文件与成果</button>}</div>
           <form className="composer" onSubmit={create}>
             <div className="material-bar"><div className="material-chips">{initialMaterials.map(m => <span key={m.ticket} className="material-chip">{m.material.name} · {m.material.sha256.slice(0, 6)}<button type="button" disabled={busy} aria-label={`移除待发送材料：${m.material.name}`} onClick={() => void run(async () => { await bridge.discardMaterialTicket(m.ticket); setInitialMaterials(old => old.filter(item => item.ticket !== m.ticket)); })}>×</button></span>)}</div>
               <button type="button" className="text-button" disabled={busy || initialMaterials.length >= 10} onClick={() => void run(async () => { const m = await bridge.prepareMaterial(); if (m) setInitialMaterials(old => [...old, m]); })}>＋引用文件材料</button><span>发送时交给 DeepSeek，不授权父目录；临时选择 10 分钟有效。</span></div>
             <label className="sr-only" htmlFor="goal">任务目标</label>
             <textarea id="goal" ref={goalRef} placeholder="描述目标，或选择项目后开始工作…" value={goal} onChange={e => setGoal(e.target.value)} maxLength={12000} rows={2} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
-            <div className="composer-bottom"><div className="composer-options"><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
+            <div className="composer-bottom"><div className="composer-options">{project ? <span className="context-chip"><Folder size={16} />{project.rootEnabled ? '使用项目目录 · 自动快照模式依设置' : '项目未授权目录'}</span> : <><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}</>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy || project?.archived}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
           </form>
           <div className="composer-note"><ShieldCheck size={14} />{(folder?.fileMode ?? fileMode) === 'snapshot' ? '选择项目即授权文件读写；改动前自动快照，可恢复。' : '已选项目可读取；文件与目录修改逐次确认。'}<span>⌘ / Ctrl + Enter</span></div>
           {bridge.preview && <button className="text-button" onClick={() => void run(async () => { const created = await bridge.createTask({ goal: '多题演示：选择报告受众与内容', skill: 'general' }); setSelected(created.id); })}>体验多题选择与自定义回答<ChevronRight size={14} /></button>}
@@ -144,13 +172,13 @@ export function App() {
           <section className="starter-section"><div className="section-label">从一个明确的目标开始<span>没有强制 workflow</span></div><div className="starters">
             {[['审阅一个项目', '查看项目结构，指出实现缺口与优先修复项。', 'review'], ['整理一份成果', '把零散材料整理成一份可审阅的 Markdown。', 'deliver'], ['想清楚再行动', '比较可行方案，说明约束与取舍。', 'general']].map(([title, text, mode], i) => <button className="starter" key={title} onClick={() => { setGoal(text); setSkill(mode as SkillId); goalRef.current?.focus(); }}><span className="starter-number">0{i + 1}</span><strong>{title}</strong><p>{text}</p><ArrowUpRight size={17} /></button>)}
           </div></section>
-          <section className="task-list-section"><div className="list-heading"><h2>任务<span className="subtle-count">{tasks.length}</span></h2><div className="task-totals">{active > 0 && <span>{active} 项进行中</span>}{pending > 0 && <span className="attention">{pending} 项待审阅</span>}</div></div>
-            <div className="list-controls"><div className="tabs">{[['all', '全部'], ['active', '进行中'], ['approval', '待审阅']].map(([id, label]) => <button className={filter === id ? 'tab selected' : 'tab'} key={id} onClick={() => setFilter(id)}>{label}{id === 'approval' && pending > 0 && <span>{pending}</span>}</button>)}</div><label className="search-box"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索任务" aria-label="搜索任务" /></label></div>
+          <section className="task-list-section"><div className="list-heading"><h2>任务<span className="subtle-count">{scopedLatest.length}</span></h2><div className="task-totals">{scopedActive > 0 && <span>{scopedActive} 项进行中</span>}{scopedPending > 0 && <span className="attention">{scopedPending} 项待审阅</span>}</div></div>
+            <div className="list-controls"><div className="tabs">{[['all', '全部'], ['active', '进行中'], ['approval', '待审阅']].map(([id, label]) => <button className={filter === id ? 'tab selected' : 'tab'} key={id} onClick={() => setFilter(id)}>{label}{id === 'approval' && scopedPending > 0 && <span>{scopedPending}</span>}</button>)}</div><label className="search-box"><Search size={15} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索任务" aria-label="搜索任务" /></label></div>
             <div className="task-table">{visible.map(t => <button className="task-row" key={t.id} onClick={() => open(t.id)}><span className="row-icon"><FileText size={18} /></span><span className="row-body"><strong>{title(t)}</strong><small>{skills.find(s => s.id === t.skill)?.title} · 第 {t.runNumber ?? 1} 轮 · {t.root ? '已授权项目目录' : '无目录访问'}{bridge.preview ? ' · 示例' : ''}</small></span><Status task={t} /><span className="row-time">{time(t.updatedAt)}</span><ChevronRight size={16} /></button>)}{!visible.length && <div className="empty-state"><Inbox size={28} /><h3>{query || filter !== 'all' ? '没有匹配的任务' : '从一个小任务开始'}</h3><p>{query || filter !== 'all' ? '换一个关键词，或切回全部任务。' : '交办目标后，你可以在这里查看每一步进展。'}</p>{(query || filter !== 'all') && <button className="text-button" onClick={() => { setQuery(''); setFilter('all'); }}>清除筛选</button>}</div>}</div>
           </section>
         </div>}
         {page === 'home' && task && <div className="task-page page-enter">
-          <div className="task-heading"><button className="text-button back" onClick={() => setSelected(undefined)}><ArrowLeft size={15} />全部任务</button><div className="task-actions"><button className="icon-button" aria-label={inspector ? '隐藏执行详情' : '显示执行详情'} onClick={() => setInspector(!inspector)}><Activity size={18} /></button>{!historical && !['completed', 'failed', 'cancelled', 'paused', 'awaiting_reconciliation'].includes(task.status) && <button className="secondary small-button" disabled={busy || task.pauseRequested} onClick={() => void run(() => bridge.pauseTask(task.id))}>{task.pauseRequested ? '等待安全暂停' : '暂停任务'}</button>}{!['completed', 'failed', 'cancelled'].includes(task.status) && <button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.cancelTask(task.id))}><Square size={12} />停止任务</button>}</div></div>
+          <div className="task-heading"><button className="text-button back" onClick={() => setSelected(undefined)}><ArrowLeft size={15} />全部任务</button><div className="task-actions"><details className="project-membership-menu"><summary>归类</summary><div className="project-membership"><label>会话归类 <select aria-label="会话所属项目" value={task.projectId ?? ''} disabled={busy || !['completed', 'failed', 'cancelled'].includes(task.status)} onChange={e => { const id = e.target.value || undefined; void run(async () => { await bridge.assignProject({ taskId: task.id, projectId: id }); await switchProject(id); setSelected(task.id); }); }}><option value="">未归类</option>{projectState.projects.filter(p => !p.archived).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><span>归类不修改本会话已有目录或权限</span></div></details><button className="icon-button" aria-label={inspector ? '隐藏执行详情' : '显示执行详情'} onClick={() => setInspector(!inspector)}><Activity size={18} /></button>{!historical && !['completed', 'failed', 'cancelled', 'paused', 'awaiting_reconciliation'].includes(task.status) && <button className="secondary small-button" disabled={busy || task.pauseRequested} onClick={() => void run(() => bridge.pauseTask(task.id))}>{task.pauseRequested ? '等待安全暂停' : '暂停任务'}</button>}{!['completed', 'failed', 'cancelled'].includes(task.status) && <button className="secondary small-button" disabled={busy} onClick={() => void run(() => bridge.cancelTask(task.id))}><Square size={12} />停止任务</button>}</div></div>
           <div className="task-title"><Status task={task} /><h1>{title(task)}</h1><div className="task-meta"><span>{skills.find(s => s.id === task.skill)?.title}</span><span>第 {task.runNumber ?? 1} 轮</span><span>{task.steps} 个模型步骤</span></div></div>
           <div className="run-navigation"><label>执行轮次 <select aria-label="执行轮次" value={task.id} onChange={e => open(e.target.value)}>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).map(t => <option key={t.id} value={t.id}>第 {t.runNumber ?? 1} 轮 · {statusLabels[t.status]}{current?.id === t.id ? ' · 当前' : ''}</option>)}</select></label>{historical && <button className="secondary small-button" onClick={() => open(current!.id)}>回到当前轮次继续</button>}<details><summary>本轮目标</summary><p>{task.goal}</p></details></div>
           <TokenStats tasks={tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id))} />
@@ -228,7 +256,8 @@ export function App() {
         </div>}
         {page === 'settings' && <Settings connection={connection} settings={{ hostExecution: hostEnabled, fileMode }} busy={busy} run={run} />}
       </main>
-      <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+    <WorkspacePane state={workspace} setState={setWorkspace} theme={theme} blocked={!!localDecision || busy} run={run} sourceTask={open}
+        projectBrowser={project && <ProjectBrowser key={project.id} project={project} tasks={tasks} run={run} open={setWorkspace} sourceTask={open} />}
         canSelect={!!task && !historical && !task.unknownEffect}
         selectText={async (tabId, expectedHash, range) => { if (task && !historical) {
           await bridge.selectWorkspace({ taskId: task.id, tabId, expectedHash, ...range });

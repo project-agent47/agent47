@@ -19,6 +19,8 @@ import { readWeb, webOrigin } from './web';
 import { answerListSchema } from '../shared/questions';
 import { Workspace } from './workspace';
 import { pageMessage } from '../shared/web-capture';
+import { ProjectStore } from '../core/projects';
+import { existsSync } from 'node:fs';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -68,7 +70,12 @@ async function boot(): Promise<void> {
   const driver = sdkDriver(() => vault.settings(), transport.fetch,
     failure => console.warn('[model-diagnostic] ' + JSON.stringify(failure)));
   const store = new TaskStore(join(root, 'tasks.db'));
-  const workspace = new Workspace(join(root, 'workspace.json'), store, artifacts, () => window, () => window?.webContents.send('tasks:changed')); await workspace.start();
+  if (!existsSync(join(root, 'projects.db')) && store.list().some(t => t.originProjectId || t.rootProjectId)) throw new Error('Project data missing; preserve task database and restore projects.db');
+  if (!existsSync(join(root, 'projects.db')) && !existsSync(join(root, 'tasks-before-projects.db'))) store.backup(join(root, 'tasks-before-projects.db'));
+  const projects = new ProjectStore(join(root, 'projects.db'));
+  projects.reconcile(store.list());
+  const workspacePath = (id?: string) => join(root, id ? `workspace-project-${id}.json` : 'workspace.json');
+  const workspace = new Workspace(workspacePath(projects.current()), store, artifacts, () => window, () => window?.webContents.send('tasks:changed')); await workspace.start();
   handle('workspace:view', () => workspace.view());
   handle('workspace:open', value => workspace.openSource(value as Parameters<Workspace['openSource']>[0]));
   handle('workspace:import', () => workspace.importFile());
@@ -102,7 +109,7 @@ async function boot(): Promise<void> {
       changeTimer = setTimeout(() => { changeTimer = undefined; window?.webContents.send('tasks:changed'); }, 60);
     }
   };
-  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb,
+  runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb, fileAuthorized: task => projects.allowed(task),
     browser: { tabs: id => workspace.browserTabs(id), read: (id, name, input, signal) => workspace.browserRead(id, name, input, signal),
       prepare: (id, call) => workspace.browserPrepare(id, call), validate: (id, action) => workspace.browserValidate(id, action), execute: (id, action, signal) => workspace.browserExecute(id, action, signal) } });
   protocol.handle('agent47', request => {
@@ -115,9 +122,57 @@ async function boot(): Promise<void> {
   });
   session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
-  handle('tasks:list', () => runtime.list());
-  handle('navigation:last-run', () => store.lastRun());
-  handle('navigation:remember-run', value => store.rememberRun(value === undefined ? undefined : idSchema.parse(value)));
+  handle('tasks:list', () => projects.decorate(runtime.list()));
+  handle('projects:view', () => ({ projects: projects.list(), currentId: projects.current() }));
+  handle('projects:create', value => { const input = z.object({ name: z.string().trim().min(1).max(96), clientRequestId: idSchema }).strict().parse(value); const p = projects.create(input.name, input.clientRequestId); changed(); return p; });
+  handle('projects:update', value => {
+    const { id, expectedRevision, ...changes } = z.object({ id: idSchema, expectedRevision: z.number().int().positive(), name: z.string().trim().min(1).max(96).optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() }).strict().parse(value);
+    const p = projects.update(id, expectedRevision, changes); changed(); return p;
+  });
+  handle('projects:assign', value => {
+    const input = z.object({ taskId: idSchema, projectId: idSchema.optional() }).strict().parse(value);
+    projects.assign(store.get(input.taskId), runtime.list(), input.projectId); changed();
+  });
+  handle('projects:bind', value => {
+    const input = z.object({ id: idSchema, expectedRevision: z.number().int().positive(), folderGrant: idSchema.optional(), revoke: z.boolean().optional() }).strict().parse(value);
+    const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
+    if (!input.revoke && !folder) throw new Error('请重新选择目录授权。');
+    if (!input.revoke && store.list().some(t => t.rootProjectId === input.id && !['completed', 'failed', 'cancelled'].includes(t.status))) throw new Error('请先结束本项目的活动会话，再改变目录。');
+    const p = projects.bind(input.id, input.expectedRevision, input.revoke ? undefined : folder!.path, folder?.fileMode);
+    if (input.folderGrant) grants.delete(input.folderGrant);
+    if (input.revoke) for (const t of store.list()) if (t.rootProjectId === input.id && !['completed', 'failed', 'cancelled', 'paused', 'awaiting_reconciliation'].includes(t.status)) runtime.pause(t.id);
+    changed(); return p;
+  });
+  let projectSwitch = Promise.resolve();
+  handle('projects:switch', value => {
+    const id = value === undefined ? undefined : idSchema.parse(value);
+    if (id) projects.get(id);
+    const operation = projectSwitch.then(async () => {
+      if (store.list().some(t => !['completed', 'failed', 'cancelled', 'paused'].includes(t.status) && t.pending.some(c => c.toolName.startsWith('browser')))) throw new Error('请等待当前网页工具完成或安全暂停后，再切换项目。');
+      const view = await workspace.switchFile(workspacePath(id)); projects.select(id); changed();
+      const last = projects.last(id), task = last && store.get(last);
+      return { state: { projects: projects.list(), currentId: id }, workspace: view, lastRun: task && projects.projectFor(task.conversationId ?? task.id) === id ? last : undefined };
+    });
+    projectSwitch = operation.then(() => {}, () => {}); return operation;
+  });
+  const projectPathInput = z.object({ id: idSchema, path: z.string().max(4096) }).strict();
+  handle('projects:files', value => {
+    const input = projectPathInput.extend({ offset: z.number().int().min(0).max(1_000_000).default(0) }).parse(value);
+    return projects.files(input.id, input.path, input.offset);
+  });
+  handle('projects:open-file', async value => {
+    const input = projectPathInput.parse(value);
+    if (projects.current() !== input.id) throw new Error('请先进入对应项目。');
+    const p = await projects.folder(input.id); return workspace.openProjectPath(p.root!, input.path);
+  });
+  handle('navigation:last-run', () => {
+    const scope = projects.current(), id = projects.last(scope) ?? (scope ? undefined : store.lastRun());
+    return id && projects.projectFor(store.get(id).conversationId ?? id) === scope ? id : undefined;
+  });
+  handle('navigation:remember-run', value => {
+    const id = value === undefined ? undefined : idSchema.parse(value);
+    store.rememberRun(id); if (id) projects.remember(id, projects.projectFor(store.get(id).conversationId ?? id));
+  });
   const materialTickets = new Map<string, { material: import('../core/materials').MaterialSnapshot; at: number }>();
   handle('materials:discard', value => { materialTickets.delete(idSchema.parse(value)); });
   handle('materials:prepare', async () => {
@@ -132,7 +187,7 @@ async function boot(): Promise<void> {
     return material ? runtime.attachMaterial(taskId, material) : runtime.list().find(t => t.id === taskId);
   });
   handle('tasks:create', async value => {
-    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional(), materialTickets: z.array(idSchema).max(10).optional() }).strict().parse(value);
+    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional(), materialTickets: z.array(idSchema).max(10).optional(), projectId: idSchema.optional() }).strict().parse(value);
     const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
     if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
     if (!providerView().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
@@ -143,7 +198,13 @@ async function boot(): Promise<void> {
     });
     if (materials.reduce((n, m) => n + m.bytes, 0) > 5_000_000) throw new Error('请减少材料：合计最多 5 MB。');
     for (const m of materials) if (!await workspace.checkMaterial(m)) throw new Error('请重新选择材料：文件已变化。');
-    const result = runtime.create(input.goal, input.skill, folder?.path, folder?.fileMode, materials);
+    const project = input.projectId ? projects.get(input.projectId) : undefined;
+    if (project?.archived) throw new Error('请先恢复项目，再新建会话。');
+    if (project && folder) throw new Error('请在项目目录设置里授权，不覆盖本轮目录。');
+    if (project?.rootEnabled) await projects.folder(project.id);
+    const result = runtime.create(input.goal, input.skill, project?.rootEnabled ? project.root : folder?.path, project?.rootEnabled ? project.fileMode : folder?.fileMode, materials,
+      project ? { originProjectId: project.id, ...(project.rootEnabled ? { rootProjectId: project.id, rootProjectRevision: project.rootRevision } : {}) } : undefined);
+    if (project) projects.register(result.id, project.id);
     for (const id of input.materialTickets ?? []) materialTickets.delete(id); return result;
   });
   handle('tasks:cancel', value => runtime.cancel(idSchema.parse(value)));

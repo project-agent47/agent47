@@ -37,7 +37,7 @@ export interface TaskView {
   createdAt: string; updatedAt: string; events: TaskEvent[]; artifacts: Artifact[];
   approval?: Approval; steps: number;
   conversationId?: string; goalId?: string; parentRunId?: string; runNumber?: number;
-  conversationTitle?: string; latestRunId?: string; materials?: MaterialView[];
+  conversationTitle?: string; latestRunId?: string; materials?: MaterialView[]; projectId?: string;
   usage?: TokenUsage[]; draft?: { text: string; reasoning: string };
   question?: UserQuestion; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup'; materials?: MaterialView[] }[];
   composerDraft?: string;
@@ -55,9 +55,20 @@ export interface TaskView {
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
-export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[] }
+export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[]; projectId?: string }
+export interface ProjectView { id: string; name: string; revision: number; root?: string; rootRevision: number; rootEnabled: boolean; fileMode: 'snapshot' | 'ask'; pinned: boolean; archived: boolean; createdAt: string; updatedAt: string }
+export interface ProjectFileList { path: string; entries: { name: string; directory: boolean }[]; nextOffset?: number }
+export interface ProjectState { projects: ProjectView[]; currentId?: string }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  projects(): Promise<ProjectState>;
+  createProject(input: { name: string; clientRequestId: string }): Promise<ProjectView>;
+  updateProject(input: { id: string; expectedRevision: number; name?: string; pinned?: boolean; archived?: boolean }): Promise<ProjectView>;
+  bindProjectFolder(input: { id: string; expectedRevision: number; folderGrant?: string; revoke?: boolean }): Promise<ProjectView>;
+  assignProject(input: { taskId: string; projectId?: string }): Promise<void>;
+  switchProject(id?: string): Promise<{ state: ProjectState; workspace: WorkspaceState; lastRun?: string }>;
+  projectFiles(input: { id: string; path: string; offset?: number }): Promise<ProjectFileList>;
+  openProjectFile(input: { id: string; path: string }): Promise<WorkspaceState>;
   openEvidence(input: { taskId: string; sourceId: string }): Promise<WorkspaceState>;
   selectWorkspace(input: { taskId: string; tabId: string; expectedHash: string; start: number; end: number }): Promise<TaskView>;
   openFileDiff(input: { taskId: string; snapshotId: string }): Promise<WorkspaceState>;

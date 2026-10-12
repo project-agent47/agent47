@@ -362,3 +362,31 @@ h1 { font-size: var(--text-lg); }
 .source-row { display: flex; flex-wrap: wrap; gap: 4px 8px; width: 100%; padding: 6px; border: 0; background: transparent; color: var(--color-text); text-align: left; cursor: pointer; }
 .source-row span, .source-list small { color: var(--color-muted); overflow-wrap: anywhere; }
 .evidence-meta span { display: block; overflow-wrap: anywhere; }
+.project-nav { max-height: 190px; overflow: auto; }
+.project-create { display: grid; gap: 6px; padding: 0 10px 8px; }
+.project-create input, .project-settings input { min-width: 0; width: 100%; }
+.project-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--color-border); font-size: 12px; flex: none; }
+.project-root { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); }
+.project-controls details { position: relative; }
+.project-settings { position: absolute; right: 0; top: 24px; z-index: 30; width: min(360px, 80vw); max-height: 65vh; overflow: auto; padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-modal); }
+.project-settings p { margin: 8px 0; overflow-wrap: anywhere; }
+.project-browser-toggle { padding: 8px; max-height: 45%; overflow: auto; flex: none; }
+.workspace-pane:has(.project-browser-toggle[open]):not(:has(.workspace-toolbar)) .workspace-empty { display: none; }
+.workspace-pane:not(:has(.workspace-toolbar)) .project-browser-toggle { flex: 1; max-height: none; }
+.project-browser-heading, .project-browser-path, .project-membership { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.project-browser-heading { padding: 6px 0; }
+.project-browser-path span { flex: 1; overflow-wrap: anywhere; }
+.project-file-row { display: flex; gap: 8px; width: 100%; text-align: left; padding: 7px 4px; border-bottom: 1px solid var(--color-border); font-size: 12px; }
+.project-file-row span { overflow-wrap: anywhere; }
+.project-membership-menu { position: relative; font-size: 12px; }
+.project-membership-menu>summary { cursor: pointer; }
+.project-membership { position: absolute; right: 0; top: 24px; z-index: 30; width: min(300px, 80vw); color: var(--color-muted); padding: 12px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: var(--shadow-modal); }
+.task-content { flex-direction: column; }
+.task-content>.task-page { height: auto; flex: 1; }
+.task-content>.project-controls { padding-inline: 16px; }
+@media (max-width: 760px) {
+  .sidebar .project-nav { display: none; }
+  .project-membership { padding: 4px 12px; }
+  .project-membership>span { display: none; }
+  .project-controls { gap: 4px; }
+}

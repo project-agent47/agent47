@@ -10,7 +10,7 @@ class DocumentBoundary extends Component<{ children: ReactNode; content: string 
   static getDerivedStateFromError() { return { failed: true }; }
   render() { return this.state.failed ? <div className="document-markdown"><p>编辑器加载失败，暂以纯文本查看。关闭后重新打开可重试。</p><pre>{this.props.content}</pre></div> : this.props.children; }
 }
-export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage, attachMaterial, selectText, canSelect }: { state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
+export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask, canSendPage, sendPage, conversationId, grantPage, attachMaterial, selectText, canSelect, projectBrowser }: { projectBrowser?: ReactNode; state: WorkspaceState; setState: (s: WorkspaceState) => void; theme: string; blocked: boolean;
   run: (operation: () => Promise<unknown>) => Promise<void>; sourceTask: (id: string) => void; canSendPage: boolean; sendPage: (tabId: string) => void; conversationId?: string; grantPage: (tabId: string, mode: 'deny' | 'read' | 'ask' | 'allow') => void; attachMaterial: (tabId: string) => void;
   canSelect: boolean; selectText: (tabId: string, hash: string, range: { start: number; end: number }) => Promise<void> }) {
   const tab = state.tabs.find(t => t.id === state.activeId), box = useRef<HTMLDivElement>(null);
@@ -52,6 +52,7 @@ export function WorkspacePane({ state, setState, theme, blocked, run, sourceTask
     <div className="workspace-tabs" role="tablist" aria-label="打开的文档">{state.tabs.map(t => <div key={t.id}>
       <button role="tab" aria-selected={tab?.id === t.id} title={t.name} onClick={() => mutate({ activeId: t.id })}>{t.name}</button>
       <button className="icon-button" aria-label={`关闭标签：${t.name}`} onClick={() => mutate({ closeId: t.id })}><X size={12} /></button></div>)}</div>
+    {projectBrowser && <details className="project-browser-toggle" open={!tab}><summary>项目文件与成果</summary>{projectBrowser}</details>}
     {tab ? <>
       <div className="workspace-toolbar"><span title={tab.source === 'web' ? '用户浏览；Agent 能力由下方当前对话权限决定' : undefined}>{tab.source === 'web' ? '网页' : tab.source === 'proposal' ? tab.status ?? '未保存提案' : `${tab.source === 'file' ? '用户材料' : tab.source === 'diff' ? '历史差异' : tab.source === 'evidence' ? '来源证据' : '已保存成果'} · ${tab.sha256.slice(0, 8)}`}</span>
         {['html', 'markdown'].includes(tab.kind) && <button className="text-button" onClick={() => setRaw(!raw)}>{raw ? '查看渲染' : '查看源码'}</button>}

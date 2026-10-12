@@ -1,4 +1,4 @@
-import type { AgentBridge, TaskView, ProviderView, CreateInput } from '../shared/contracts';
+import type { AgentBridge, TaskView, ProviderView, CreateInput, ProjectView, WorkspaceState } from '../shared/contracts';
 import { answerSummary, parseQuestions, validateAnswers } from '../shared/questions';
 import { previewWorkspace } from './workspace-preview';
 import { pageMessage } from '../shared/web-capture';
@@ -47,9 +47,40 @@ let previewRetention: 0 | 7 | 30 | 90 = 0;
 const pageCaptures = new Map<string, PageCapture>();
 const preparedMaterials = new Map<string, import('../shared/contracts').MaterialView>();
 const materialContents = new Map<string, string>();
+const previewProjects: ProjectView[] = [], projectRequests = new Map<string, string>(), memberships = new Map<string, string>();
+const projectWorkspaces = new Map<string, WorkspaceState>();
+let currentProject: string | undefined;
 samples[1].events.push({ id: 'source-demo', at: now, kind: 'assistant', text: '示例来源：[查看示例证据](agent47-source:sffffffffffffffff)。无法核对的标记会显示为 [未读取引用](agent47-source:s0000000000000000)，不会变成可点击来源。' });
 const previewBridge: AgentBridge = {
   preview: true,
+  projects: async () => clone({ projects: previewProjects, currentId: currentProject }),
+  createProject: async input => {
+    const prior = projectRequests.get(input.clientRequestId); if (prior) return clone(previewProjects.find(p => p.id === prior)!);
+    const p: ProjectView = { id: crypto.randomUUID(), name: input.name.trim(), revision: 1, rootRevision: 0, rootEnabled: false, fileMode: 'snapshot', pinned: false, archived: false, createdAt: now, updatedAt: now };
+    previewProjects.unshift(p); projectRequests.set(input.clientRequestId, p.id); emit(); return clone(p);
+  },
+  updateProject: async ({ id, expectedRevision, ...changes }) => {
+    const p = previewProjects.find(p => p.id === id)!; if (p.revision !== expectedRevision) throw new Error('请重新审阅：项目设置已变化。');
+    Object.assign(p, changes, { revision: p.revision + 1, updatedAt: new Date().toISOString() }); emit(); return clone(p);
+  },
+  bindProjectFolder: async input => {
+    const p = previewProjects.find(p => p.id === input.id)!;
+    if (p.revision !== input.expectedRevision) throw new Error('请重新审阅项目。');
+    Object.assign(p, { root: '~/Documents/日常工作示例', rootEnabled: !input.revoke, rootRevision: p.rootRevision + 1, revision: p.revision + 1 }); emit(); return clone(p);
+  },
+  assignProject: async input => {
+    const t = samples.find(t => t.id === input.taskId)!;
+    if (!['completed', 'failed', 'cancelled'].includes(t.status)) throw new Error('请先结束本会话。');
+    if (input.projectId) memberships.set(t.conversationId ?? t.id, input.projectId); else memberships.delete(t.conversationId ?? t.id); emit();
+  },
+  switchProject: async id => {
+    projectWorkspaces.set(currentProject ?? '', await previewWorkspace.view()); currentProject = id;
+    const workspace = await previewWorkspace.replace(projectWorkspaces.get(id ?? '') ?? { tabs: [], width: 440, visible: false });
+    for (const tab of workspace.tabs) if (tab.kind === 'web') { tab.paused = true; tab.agentGrants = []; }
+    await previewWorkspace.replace(workspace); emit(); return { state: clone({ projects: previewProjects, currentId: id }), workspace, lastRun: undefined };
+  },
+  projectFiles: async input => ({ path: input.path, entries: [{ name: '周报.md', directory: false }, { name: '旅行计划.html', directory: false }], nextOffset: undefined }),
+  openProjectFile: async input => previewWorkspace.material(input.path, '# 日常工作示例\n\n这是项目资料预览，不读取真实目录，也不调用模型。'),
   openEvidence: async input => {
     const source = samples.find(t => t.id === input.taskId)?.sources?.find(s => s.id === input.sourceId);
     if (!source) throw new Error('没有实际读取的来源记录。'); return previewWorkspace.evidence(source);
@@ -108,7 +139,7 @@ const previewBridge: AgentBridge = {
     const snapshot = pageCaptures.get(input.id); if (!snapshot || snapshot.digest !== input.digest) throw new Error('请重新审阅页面。');
     return previewBridge.sendMessage({ taskId: snapshot.taskId, text: pageMessage(snapshot), mode: 'queue', clientMessageId: input.clientMessageId });
   },
-  listTasks: async () => clone(samples.map(t => ({ ...t, conversationTitle: t.conversationTitle ?? samples.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60), latestRunId: samples.find(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id))?.id }))),
+  listTasks: async () => clone(samples.map(t => ({ ...t, projectId: memberships.get(t.conversationId ?? t.id), conversationTitle: t.conversationTitle ?? samples.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60), latestRunId: samples.find(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id))?.id }))),
   createTask: async (input: CreateInput) => {
     const at = new Date().toISOString();
     const task: TaskView = {
@@ -118,6 +149,7 @@ const previewBridge: AgentBridge = {
       events: [{ id: crypto.randomUUID(), at, kind: 'user', text: input.goal }]
     };
     samples.unshift(task); emit();
+    if (input.projectId) { memberships.set(task.id, input.projectId); const p = previewProjects.find(p => p.id === input.projectId)!; task.root = p.rootEnabled ? p.root : undefined; }
     if (input.goal.includes('多题演示')) {
       task.status = 'awaiting_input'; task.steps = 1;
       task.question = { id: crypto.randomUUID(), text: '多题交互示例', questions: clone(demoQuestions), revision: 1, digest: '0'.repeat(64), legacy: false };

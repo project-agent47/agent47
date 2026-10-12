@@ -8,6 +8,7 @@ import { evidenceView, validateEvidence, type EvidenceSnapshot } from './evidenc
 
 export interface ToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface TaskRecord extends TaskView {
+  originProjectId?: string; rootProjectId?: string; rootProjectRevision?: number;
   messages: ModelMessage[]; pending: ToolCall[];
   compactions?: { summary: string; keptFrom: number; at: string }[];
   effectStarted?: string; loadedSkills?: string[];
@@ -36,12 +37,24 @@ export class TaskStore {
     this.db.exec('CREATE TABLE IF NOT EXISTS material_versions (id TEXT PRIMARY KEY, body TEXT NOT NULL);');
     this.db.exec('CREATE TABLE IF NOT EXISTS source_evidence (id TEXT PRIMARY KEY, body TEXT NOT NULL);');
     const version = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('schema');
-    if (version && version.value !== '1') throw new Error('Unsupported database schema. Preserve database and upgrade the app.');
-    this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?,?)').run('schema', '1');
+    if (version && !['1', '2'].includes(String(version.value))) throw new Error('Unsupported database schema. Preserve database and upgrade the app.');
+    if (version?.value === '1' && !existsSync(path + '.before-schema2')) this.backup(path + '.before-schema2');
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('CREATE TABLE IF NOT EXISTS task_views(id TEXT PRIMARY KEY,body TEXT NOT NULL);');
+      this.db.prepare('INSERT INTO metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema', '2');
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     // Fail closed on corruption instead of manufacturing replacement defaults.
     const check = this.db.prepare('PRAGMA quick_check').get();
     if (!check || Object.values(check)[0] !== 'ok') throw new Error('Database integrity check failed');
-    this.list();
+    const tasks = this.list();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('DELETE FROM task_views');
+      for (const task of tasks) this.db.prepare('INSERT INTO task_views VALUES (?,?)').run(task.id, JSON.stringify(publicTask(task)));
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
   list(): TaskRecord[] {
     return this.db.prepare('SELECT body FROM tasks ORDER BY rowid DESC').all().map(row => {
@@ -50,6 +63,7 @@ export class TaskStore {
       return this.hydrateMaterials(parsed);
     });
   }
+  views(): TaskView[] { return this.db.prepare('SELECT v.body FROM task_views v JOIN tasks t ON t.id=v.id ORDER BY t.rowid DESC').all().map(r => JSON.parse(String(r.body)) as TaskView); }
   get(id: string): TaskRecord {
     const row = this.db.prepare('SELECT body FROM tasks WHERE id=?').get(id);
     if (!row) throw new Error('Task not found');
@@ -101,6 +115,7 @@ export class TaskStore {
       void content; pointers[id] = pointer; this.materialCache.set(id, material);
     }
     this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify({ ...task, ...(task.materialSnapshots ? { materialSnapshots: pointers } : {}), ...(task.evidenceSnapshots ? { evidenceSnapshots: sources } : {}) }));
+    this.db.prepare('INSERT INTO task_views VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify(publicTask(task)));
   }
   command(id: string): string | undefined { return this.db.prepare('SELECT task_id FROM commands WHERE id=?').get(id)?.task_id as string | undefined; }
   lastRun(): string | undefined {
@@ -122,6 +137,7 @@ export class TaskStore {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   close(): void { this.db.close(); }
+  backup(path: string): void { this.db.prepare('VACUUM INTO ?').run(path); chmodSync(path, 0o600); }
 }
 export function publicTask(task: TaskRecord): TaskView {
   return {
