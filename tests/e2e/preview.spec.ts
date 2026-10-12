@@ -25,6 +25,7 @@ test('daily projects organize conversations and scoped file tabs without implici
   await expect(page.getByRole('tab', { name: '周报.md', exact: true })).toBeVisible();
   await page.getByLabel('切换深色模式').click(); await page.setViewportSize({ width: 800, height: 900 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect((await page.locator('.composer-options .context-chip').boundingBox())!.height).toBeLessThan(80);
   await page.screenshot({ path: '.qa/projects-preview-dark.png', animations: 'disabled' });
 });
 test('known citations open historical excerpts, invalid IDs stay inert, sources do not consume drafts', async ({ page }) => {

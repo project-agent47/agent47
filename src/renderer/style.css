@@ -384,6 +384,9 @@ h1 { font-size: var(--text-lg); }
 .task-content { flex-direction: column; }
 .task-content>.task-page { height: auto; flex: 1; }
 .task-content>.project-controls { padding-inline: 16px; }
+.home .composer-options { flex-wrap: wrap; }
+.home .context-chip svg { flex-shrink: 0; }
+.home-heading>button { flex-shrink: 0; white-space: nowrap; }
 @media (max-width: 760px) {
   .sidebar .project-nav { display: none; }
   .project-membership { padding: 4px 12px; }
