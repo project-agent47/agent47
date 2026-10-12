@@ -15,6 +15,7 @@ import { browserSnapshotScript, browserActionScript, browserTabInput, browserOpe
 import { effectDigest } from '../core/effects';
 import type { Approval } from '../shared/contracts';
 import { validateMaterialSnapshot, type MaterialSnapshot } from '../core/materials';
+import { evidenceView, validateEvidence, type EvidenceSnapshot } from '../core/evidence';
 import type { ToolCall } from '../core/store';
 
 const sourceSchema = z.discriminatedUnion('kind', [
@@ -25,10 +26,17 @@ const tabSchema = z.object({
   id: z.string().uuid(), name: z.string().min(1).max(255), kind: z.enum(['html', 'markdown', 'code', 'unsupported', 'web', 'diff']),
   content: z.string().max(1_000_000).optional(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
   before: z.string().max(1_000_000).optional(), beforeHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  source: z.enum(['artifact', 'proposal', 'file', 'web', 'diff']), taskId: z.string().uuid().optional(), status: z.string().max(100).optional(),
+  source: z.enum(['artifact', 'proposal', 'file', 'web', 'diff', 'evidence']), taskId: z.string().uuid().optional(), status: z.string().max(100).optional(),
+  evidence: z.object({
+    id: z.string().regex(/^s[a-f0-9]{16}$/), kind: z.enum(['material', 'project', 'web']), name: z.string().max(200), url: z.string().url().max(2048).optional(),
+    observedAt: z.string(), versionHash: z.string().regex(/^[a-f0-9]{64}$/), contentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    offset: z.number().int().nonnegative(), end: z.number().int().nonnegative(), coverage: z.string().max(800), originRunId: z.string().uuid(), tool: z.string().max(64), uri: z.string()
+  }).strict().optional(),
   path: z.string().max(4096).optional(), origin: sourceSchema.optional(), paused: z.boolean().optional(), url: z.string().url().max(2048).optional(), revision: z.number().int().nonnegative().optional()
 }).strict().superRefine((tab, ctx) => {
   if ((tab.kind === 'diff' || tab.source === 'diff') && (tab.kind !== 'diff' || tab.source !== 'diff' || tab.before === undefined || tab.content === undefined || !tab.beforeHash || tab.path || tab.origin)) ctx.addIssue({ code: 'custom', message: 'Invalid recorded diff tab' });
+  if (tab.source === 'evidence' && (tab.kind !== 'code' || !tab.evidence || tab.content === undefined || tab.path || tab.origin || tab.url)) ctx.addIssue({ code: 'custom', message: 'Invalid evidence tab' });
+  if (tab.evidence && tab.source !== 'evidence') ctx.addIssue({ code: 'custom', message: 'Invalid evidence source' });
 });
 type SavedTab = z.infer<typeof tabSchema>;
 const stateSchema = z.object({ tabs: z.array(tabSchema).max(10), activeId: z.string().uuid().optional(), width: z.number().int().min(280).max(1000), visible: z.boolean() }).strict();
@@ -57,6 +65,7 @@ export class Workspace {
     if (this.state.activeId && !this.state.tabs.some(t => t.id === this.state.activeId)) throw new Error('Invalid workspace active tab');
     for (const tab of this.state.tabs) if (tab.content !== undefined && sha256(tab.content) !== tab.sha256) throw new Error('Workspace integrity failure');
     for (const tab of this.state.tabs) if (tab.before !== undefined && sha256(tab.before) !== tab.beforeHash) throw new Error('Workspace diff integrity failure');
+    for (const tab of this.state.tabs) if (tab.evidence) validateEvidence({ ...tab.evidence, content: tab.content! });
     for (const tab of this.state.tabs) if (tab.kind === 'web') { webOrigin(tab.url!); tab.paused = true; tab.status = '重启后暂停，刷新才重新联网'; }
     // Native HTML pages are created only when the renderer explicitly lays out a visible tab.
   }
@@ -252,7 +261,7 @@ export class Workspace {
     this.writes = op.catch(() => {}); return op;
   }
   private async add(tab: Omit<SavedTab, 'id'>) {
-    const existing = this.state.tabs.find(t => t.sha256 === tab.sha256 && t.beforeHash === tab.beforeHash && t.name === tab.name && t.source === tab.source && t.taskId === tab.taskId &&
+    const existing = this.state.tabs.find(t => t.sha256 === tab.sha256 && t.beforeHash === tab.beforeHash && t.evidence?.id === tab.evidence?.id && t.name === tab.name && t.source === tab.source && t.taskId === tab.taskId &&
       (tab.path ? t.path === tab.path : JSON.stringify(t.origin) === JSON.stringify(tab.origin)));
     if (existing) this.state.activeId = existing.id;
     else {
@@ -305,6 +314,11 @@ export class Workspace {
   async openDiff(taskId: string, diff: { path: string; before: string; after: string }) {
     return this.add({ name: `差异 · ${basename(diff.path).slice(0, 240)}`, kind: 'diff', source: 'diff', content: diff.after, before: diff.before,
       sha256: sha256(diff.after), beforeHash: sha256(diff.before), taskId, status: '写入前后已留档版本 · 不是当前磁盘或恢复操作' });
+  }
+  async openEvidence(source: EvidenceSnapshot) {
+    validateEvidence(source);
+    return this.add({ name: `证据 · ${source.name.slice(0, 240)}`, kind: 'code', source: 'evidence', content: source.content,
+      sha256: source.contentHash, taskId: source.originRunId, evidence: evidenceView(source), status: '实际读取的历史摘录 · 不重新联网或读取磁盘' });
   }
   async chooseMaterial(): Promise<MaterialSnapshot | undefined> {
     const answer = await dialog.showOpenDialog(this.owner()!, { title: '选择单份文本材料；发送时交给 DeepSeek，不授权父目录', properties: ['openFile'] });
@@ -418,7 +432,7 @@ export class Workspace {
   }
   async refresh(id: string) {
     const old = this.state.tabs.find(t => t.id === id); if (!old) throw new Error('Task not found');
-    if (old.kind === 'diff') throw new Error('请从文件改动重新打开差异；当前标签是已留档版本。');
+    if (old.kind === 'diff' || old.source === 'evidence') throw new Error('当前标签是已留档版本；不能通过刷新替换证据。');
     if (old.kind === 'web') { this.destroy(id); old.paused = false; old.revision = (old.revision ?? 0) + 1; old.status = '重新加载网页'; this.hide(); await this.persist(); return this.view(); }
     const next = old.origin ? await this.fromSource(old.origin) : await this.fromFile(old.path!);
     this.destroy(id); Object.assign(old, next, { paused: false, revision: (old.revision ?? 0) + 1 }); this.hide(); await this.persist(); return this.view();

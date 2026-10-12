@@ -2,8 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync, existsSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ModelMessage } from 'ai';
-import type { TaskView } from '../shared/contracts';
+import type { TaskView, EvidenceView } from '../shared/contracts';
 import type { MaterialSnapshot } from './materials';
+import { evidenceView, validateEvidence, type EvidenceSnapshot } from './evidence';
 
 export interface ToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface TaskRecord extends TaskView {
@@ -14,6 +15,7 @@ export interface TaskRecord extends TaskView {
   queueAfterStep?: number;
   questionReceipts?: Record<string, string>;
   materialSnapshots?: Record<string, MaterialSnapshot>; authorizedMaterialIds?: string[];
+  evidenceSnapshots?: Record<string, EvidenceSnapshot>;
   progressGuard?: { input?: string; observation?: string; repeatedInputs: number; repeatedObservations: number; consecutiveErrors: number; reason?: 'repeated_tool' | 'errors' };
 }
 
@@ -21,6 +23,7 @@ export interface TaskRecord extends TaskView {
 export class TaskStore {
   private db: DatabaseSync;
   private materialCache = new Map<string, MaterialSnapshot>();
+  private evidenceCache = new Map<string, EvidenceSnapshot>();
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     if (existsSync(path) && lstatSync(path).isSymbolicLink()) throw new Error('Database symlink denied');
@@ -31,6 +34,7 @@ export class TaskStore {
     for (const sidecar of [`${path}-wal`, `${path}-shm`]) if (existsSync(sidecar)) chmodSync(sidecar, 0o600);
     this.db.exec('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, task_id TEXT NOT NULL);');
     this.db.exec('CREATE TABLE IF NOT EXISTS material_versions (id TEXT PRIMARY KEY, body TEXT NOT NULL);');
+    this.db.exec('CREATE TABLE IF NOT EXISTS source_evidence (id TEXT PRIMARY KEY, body TEXT NOT NULL);');
     const version = this.db.prepare('SELECT value FROM metadata WHERE key=?').get('schema');
     if (version && version.value !== '1') throw new Error('Unsupported database schema. Preserve database and upgrade the app.');
     this.db.prepare('INSERT OR IGNORE INTO metadata VALUES (?,?)').run('schema', '1');
@@ -52,6 +56,17 @@ export class TaskStore {
     return this.hydrateMaterials(JSON.parse(String(row.body)) as TaskRecord);
   }
   private hydrateMaterials(task: TaskRecord): TaskRecord {
+    for (const [id, pointer] of Object.entries(task.evidenceSnapshots ?? {})) {
+      let source = pointer;
+      if (typeof source.content !== 'string') {
+        const cached = this.evidenceCache.get(id), row = cached ? undefined : this.db.prepare('SELECT body FROM source_evidence WHERE id=?').get(id);
+        if (!cached && !row) throw new Error('Missing source evidence; preserve database');
+        source = cached ?? JSON.parse(String(row!.body)) as EvidenceSnapshot;
+      }
+      validateEvidence(source);
+      if (source.id !== id || source.contentHash !== pointer.contentHash || source.versionHash !== pointer.versionHash) throw new Error('Invalid source evidence binding');
+      task.evidenceSnapshots![id] = source; this.evidenceCache.set(id, source);
+    }
     for (const [id, metadata] of Object.entries(task.materialSnapshots ?? {})) {
       if (typeof metadata.content === 'string') continue; // Additive legacy snapshot migration at next save.
       let material = this.materialCache.get(id);
@@ -67,6 +82,15 @@ export class TaskStore {
   }
   save(task: TaskRecord): void {
     task.updatedAt = new Date().toISOString();
+    const sources: Record<string, EvidenceView> = {};
+    for (const [id, source] of Object.entries(task.evidenceSnapshots ?? {})) {
+      validateEvidence(source);
+      if (source.id !== id) throw new Error('Invalid source ID binding');
+      const body = JSON.stringify(source), old = this.db.prepare('SELECT body FROM source_evidence WHERE id=?').get(id);
+      if (old && old.body !== body) throw new Error('Immutable source evidence changed');
+      this.db.prepare('INSERT OR IGNORE INTO source_evidence VALUES (?,?)').run(id, body);
+      sources[id] = evidenceView(source); this.evidenceCache.set(id, source);
+    }
     const pointers: Record<string, Omit<MaterialSnapshot, 'content'>> = {};
     for (const [id, material] of Object.entries(task.materialSnapshots ?? {})) {
       const body = JSON.stringify(material);
@@ -76,7 +100,7 @@ export class TaskStore {
       const { content, ...pointer } = material;
       void content; pointers[id] = pointer; this.materialCache.set(id, material);
     }
-    this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify({ ...task, ...(task.materialSnapshots ? { materialSnapshots: pointers } : {}) }));
+    this.db.prepare('INSERT INTO tasks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body').run(task.id, JSON.stringify({ ...task, ...(task.materialSnapshots ? { materialSnapshots: pointers } : {}), ...(task.evidenceSnapshots ? { evidenceSnapshots: sources } : {}) }));
   }
   command(id: string): string | undefined { return this.db.prepare('SELECT task_id FROM commands WHERE id=?').get(id)?.task_id as string | undefined; }
   lastRun(): string | undefined {
@@ -110,6 +134,6 @@ export function publicTask(task: TaskRecord): TaskView {
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
     context: task.context, unknownEffect: Boolean(task.effectStarted),
     fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? [], composerDraft: task.composerDraft,
-    pause: task.pause, pauseRequested: task.pauseRequested, progress: task.progress
+    pause: task.pause, pauseRequested: task.pauseRequested, progress: task.progress, sources: Object.values(task.evidenceSnapshots ?? {}).map(evidenceView)
   };
 }

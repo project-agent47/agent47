@@ -8,6 +8,7 @@ const { picker, opener } = vi.hoisted(() => ({ picker: vi.fn(), opener: vi.fn().
 vi.mock('electron', () => ({ BrowserWindow: class {}, WebContentsView: class {}, session: {}, dialog: { showOpenDialog: picker }, shell: { openPath: opener } }));
 import { Workspace } from '../src/main/workspace';
 import { artifactPath, sha256 } from '../src/core/tools';
+import { captureEvidence, type EvidenceSnapshot } from '../src/core/evidence';
 import { browserSnapshotScript } from '../src/shared/browser-tools';
 let root: string, store: TaskStore, workspace: Workspace;
 async function browserSetup() {
@@ -173,6 +174,23 @@ it('library selections stay reference-only even if user project overlaps the art
   await writeFile(await artifactPath(join(root, 'artifacts'), taskId, artifact.id, artifact.name), artifact.content);
   const tab = (await workspace.openSource({ kind: 'artifact', taskId, artifactId: artifact.id })).tabs[0];
   expect((await workspace.selectionMaterial(taskId, tab.id, tab.sha256, 0, 5)).selection).toEqual({ start: 0, end: 5 });
+});
+it('opens exact historical evidence without loading source paths or networking, persists and rejects refresh or selection', async () => {
+  const id = randomUUID(), at = new Date().toISOString();
+  const task = { id, goal: 'Read', skill: 'general' as const, status: 'completed' as const, createdAt: at, updatedAt: at, steps: 0, events: [], artifacts: [], messages: [], pending: [] };
+  const value = captureEvidence(task, { toolName: 'browserRead', toolCallId: 'web', input: {} }, { url: 'https://example.com/', content: 'OLD PAGE', contentDigest: sha256('OLD PAGE'), offset: 30 }) as { source: EvidenceSnapshot };
+  const source = (task as import('../src/core/store').TaskRecord).evidenceSnapshots![value.source.id], opened = await workspace.openEvidence(source);
+  expect(opened.tabs[0]).toMatchObject({ source: 'evidence', content: 'OLD PAGE', evidence: { offset: 30, end: 38 } });
+  expect(opened.tabs[0]).not.toHaveProperty('url'); // Historical excerpt does not create a live native view.
+  await expect(workspace.refresh(opened.activeId!)).rejects.toThrow('留档');
+  await expect(workspace.selectionMaterial(id, opened.activeId!, source.contentHash, 0, 3)).rejects.toThrow();
+  const reopened = new Workspace(join(root, 'workspace.json'), store, '/unused', () => undefined); await reopened.start();
+  expect(reopened.view().tabs[0].content).toBe('OLD PAGE');
+  const secondValue = captureEvidence(task, { toolName: 'browserRead', toolCallId: 'other-range', input: {} }, { url: 'https://example.com/', content: 'OLD PAGE', contentDigest: sha256('OLD PAGE'), offset: 60 }) as { source: EvidenceSnapshot };
+  const second = (task as import('../src/core/store').TaskRecord).evidenceSnapshots![secondValue.source.id];
+  const distinct = await workspace.openEvidence(second);
+  expect(distinct.tabs).toHaveLength(2);
+  expect(distinct.tabs.find(t => t.id === distinct.activeId)?.evidence?.offset).toBe(60);
 });
 it('diff tabs persist both validated versions without paths, edit rights or system opening', async () => {
   const taskId = randomUUID(), opened = await workspace.openDiff(taskId, { path: 'a.ts', before: 'old', after: 'new' });

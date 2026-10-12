@@ -158,6 +158,10 @@ async function boot(): Promise<void> {
     const input = z.object({ taskId: idSchema, tabId: idSchema, expectedHash: z.string().regex(/^[a-f0-9]{64}$/), start: z.number().int().nonnegative(), end: z.number().int().positive() }).strict().parse(value);
     return runtime.attachMaterial(input.taskId, await workspace.selectionMaterial(input.taskId, input.tabId, input.expectedHash, input.start, input.end));
   });
+  handle('workspace:evidence', value => {
+    const input = z.object({ taskId: idSchema, sourceId: z.string().regex(/^s[a-f0-9]{16}$/) }).strict().parse(value);
+    return workspace.openEvidence(runtime.evidence(input.taskId, input.sourceId));
+  });
   handle('workspace:diff', async value => {
     const input = z.object({ taskId: idSchema, snapshotId: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(value);
     return workspace.openDiff(input.taskId, await runtime.fileDiff(input.taskId, input.snapshotId));

@@ -11,6 +11,9 @@ const demoQuestions = parseQuestions({ questions: [
 ] }).questions;
 
 const now = new Date().toISOString();
+const sampleSource = { id: 'sffffffffffffffff', uri: 'agent47-source:sffffffffffffffff', kind: 'material' as const, name: '示例材料.md',
+  versionHash: 'a'.repeat(64), contentHash: 'b'.repeat(64), offset: 100, end: 165, observedAt: now, originRunId: 'preview-answer',
+  tool: 'readMaterial', coverage: '示例摘录，不读取真实材料或调用模型。' };
 const sampleContent = '# Agent47 桌面改造清单\n\n## 第一批闭环\n\n- 使用 AI SDK 接入真实模型\n- 用目标驱动的工具循环替代固定阶段\n- 仅允许读取明确授权的项目目录\n- 写入前展示完整成果内容，并确认权限\n- 记录任务检查点和可追溯的执行事件\n\n## 后续验收\n\nWindows / macOS 安装、系统密钥存储和原生自动化需要分别验证。\n';
 const samples: TaskView[] = [{
   id: 'preview-review', goal: '整理 Agent47 桌面改造清单，生成一份可审阅的 Markdown', skill: 'deliver',
@@ -26,6 +29,7 @@ const samples: TaskView[] = [{
 }, {
   id: 'preview-answer', goal: '解释任务审批与固定 workflow 有什么区别', skill: 'general',
   status: 'completed', createdAt: now, updatedAt: now, steps: 1, artifacts: [],
+  sources: [sampleSource],
   fileChanges: [{ id: 'e'.repeat(64), path: 'example.ts', state: 'saved', kind: 'project_write' }],
   events: [
     { id: 'b1', at: now, kind: 'user', text: '解释任务审批与固定 workflow 有什么区别' },
@@ -43,8 +47,13 @@ let previewRetention: 0 | 7 | 30 | 90 = 0;
 const pageCaptures = new Map<string, PageCapture>();
 const preparedMaterials = new Map<string, import('../shared/contracts').MaterialView>();
 const materialContents = new Map<string, string>();
+samples[1].events.push({ id: 'source-demo', at: now, kind: 'assistant', text: '示例来源：[查看示例证据](agent47-source:sffffffffffffffff)。无法核对的标记会显示为 [未读取引用](agent47-source:s0000000000000000)，不会变成可点击来源。' });
 const previewBridge: AgentBridge = {
   preview: true,
+  openEvidence: async input => {
+    const source = samples.find(t => t.id === input.taskId)?.sources?.find(s => s.id === input.sourceId);
+    if (!source) throw new Error('没有实际读取的来源记录。'); return previewWorkspace.evidence(source);
+  },
   selectWorkspace: async input => {
     const task = samples.find(t => t.id === input.taskId)!, tab = (await previewWorkspace.view()).tabs.find(t => t.id === input.tabId);
     if (!tab || tab.sha256 !== input.expectedHash || !['markdown', 'code'].includes(tab.kind) || !['file', 'artifact'].includes(tab.source) ||

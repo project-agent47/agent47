@@ -9,6 +9,7 @@ import { askUserInput } from '../shared/questions';
 import { browserTabInput, browserOpenInput, browserNavigationInput, browserElementInput, browserFillInput, browserScrollInput, browserReadInput, browserWaitInput } from '../shared/browser-tools';
 import { materialReadInput } from './materials';
 import { fileEditInput } from '../shared/file-edits';
+import { evidenceReadInput } from './evidence';
 
 export const pathInput = z.object({ path: z.string().max(1024) });
 export const artifactInput = z.object({
@@ -37,6 +38,7 @@ export const tools = {
   writeFile: tool({ description: 'Create or replace selected-project text, automatically creating missing parent directories. expectedHash null for a new file, otherwise SHA-256 from readFile. Runtime permission mode and write-before snapshots apply.', inputSchema: writeInput }),
   editFile: tool({ description: 'Replace exactly one occurrence of oldText. Requires readFile hash. Runtime permission mode and write-before snapshots apply.', inputSchema: editInput }),
   fileEdit: tool({ description: 'Preferred precise edit: one file, expectedHash of ORIGINAL content, 1–32 non-overlapping edits oldText/newText matched against ORIGINAL, never sequentially. Each must be unique or provide exact original UTF-16 startOffset from selection/read. Only LF/CRLF differences may normalize; no fuzzy/whitespace matching. All hunks preflight before one write/snapshot; returns verified hash and ranges. No create/delete/rename or arbitrary diff commands.', inputSchema: fileEditInput }),
+  readEvidence: tool({ description: 'Re-read an existing conversation source receipt after context compression. Historical observed excerpt only, not current page/file; no network or new permissions. Use exact source id from source.uri; offset is relative to archived excerpt, length max12000. This does not create a new observation.', inputSchema: evidenceReadInput }),
   makeDirectory: tool({ description: 'Create a relative project directory and missing parents. Runtime permission mode applies; created empty directories can be restored.', inputSchema: pathInput }),
   runShell: tool({ description: 'Execute a host shell command in a selected-project cwd. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust. No secrets/unrelated private data.', inputSchema: shellInput }),
   runCode: tool({ description: 'Execute JavaScript in Electron bundled Node utility process. require is available. NOT sandboxed. Requires host execution enabled; runtime asks exact-payload approval unless this conversation has explicit host trust.', inputSchema: codeInput }),

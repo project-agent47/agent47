@@ -34,6 +34,8 @@ jobs:
         if: runner.os != 'Linux'
       - run: npm run test:selection:native
         if: runner.os != 'Linux'
+      - run: npm run test:evidence:native
+        if: runner.os != 'Linux'
       - run: npm run test:pause:native
         if: runner.os != 'Linux'
       - run: npm audit --omit=dev
@@ -55,4 +57,5 @@ jobs:
       - run: xvfb-run -a npm run test:agent-browser:native
       - run: xvfb-run -a npm run test:materials:native
       - run: xvfb-run -a npm run test:selection:native
+      - run: xvfb-run -a npm run test:evidence:native
       - run: xvfb-run -a npm run test:pause:native
