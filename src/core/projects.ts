@@ -23,6 +23,9 @@ export class ProjectStore {
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);');
     const version = this.db.prepare('SELECT value FROM meta WHERE key=?').get('schema');
     if (version && !['1', '2'].includes(String(version.value))) throw new Error('Unsupported project schema; preserve data');
+    if (version?.value === '2' && !this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_context'").get()) {
+      this.db.close(); throw new Error('Project context table missing; preserve data and restore the complete database');
+    }
     if (version?.value === '1' && !existsSync(path + '.before-context')) { this.db.prepare('VACUUM INTO ?').run(path + '.before-context'); chmodSync(path + '.before-context', 0o600); }
     this.db.exec('BEGIN IMMEDIATE');
     try {

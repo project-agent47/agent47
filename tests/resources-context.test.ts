@@ -119,6 +119,18 @@ test('schema one upgrade keeps a consistent backup and commits schema with conte
   expect(current.prepare("SELECT name FROM sqlite_master WHERE name='project_context'").get()).toBeDefined();
   old.close(); current.close();
 });
+test('schema two missing context table fails closed rather than silently replacing project relations', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'a47-context-missing-'))), path = join(root, 'projects.db');
+  const projects = new ProjectStore(path), p = projects.create('保留原资料', randomUUID());
+  projects.saveContext(p.id, 0, { instructions: '不可静默覆盖' }); projects.close();
+  const damaged = new DatabaseSync(path); damaged.exec('DROP TABLE project_context'); damaged.close();
+  expect(() => new ProjectStore(path)).toThrow('Project context table missing');
+  const preserved = new DatabaseSync(path);
+  expect(preserved.prepare("SELECT name FROM sqlite_master WHERE name='project_context'").get()).toBeUndefined();
+  expect(preserved.prepare('SELECT body FROM projects WHERE id=?').get(p.id)).toBeDefined();
+  expect(preserved.prepare("SELECT value FROM meta WHERE key='schema'").get()!.value).toBe('2');
+  preserved.close();
+});
 test('verified working-file output and its pin share one row, restored outputs disappear', async () => {
   const { root, project, projectStore, store, resources } = await setup(), taskId = randomUUID(), m = material(join(root, 'notes.md'));
   const task: TaskRecord = { id: taskId, goal: '写文件', skill: 'general', root, status: 'completed', createdAt: '', updatedAt: '', steps: 1, messages: [], pending: [], events: [], artifacts: [],

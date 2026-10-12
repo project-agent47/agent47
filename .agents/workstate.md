@@ -1,5 +1,7 @@
 # Current workstate
 
+- Owner-approved PR15 review/merge in progress. P1b final implementation ee88e57 passed220unit/25UI, native resources and realDeepSeek Linux2+3; CI38206807479 allfourSUCCESS. Integration review adds schema2 missing-context-table failclosed guard plus regression; no feature expansion or new paidmodel calls. Merge only after exact newhead fourCI pass; then verify master CI.
+
 - Current master ee69dc3e89b36c233b4d0631baf1251d04aeb149: owner-approved PR14 self-reviewed/merged; fresh207unit/build/lint/native Project fixture and master CI38204678037 all four success.
 - Active P1b feat/project-context-resources. Owner asked to unify everyday materials/artifacts/resources, not build parallel managers. Source contract docs/project-context-resources.md; independent PR required, do not auto-merge this increment.
 - Shared ResourceBrowser replaces global artifact library and powers scoped Project resources and @ picker. Resource projection dedups same origin+version, saved artifact plus pin one row; new verified project file outputs record hash/bytes, legacy writes not fabricated/backfilled.
