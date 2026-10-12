@@ -3,6 +3,14 @@ import type { AgentBridge } from '../shared/contracts';
 
 const bridge: AgentBridge = {
   preview: false,
+  projectContext: id => ipcRenderer.invoke('projects:context', id),
+  saveProjectInstructions: input => ipcRenderer.invoke('projects:instructions', input),
+  pinResource: input => ipcRenderer.invoke('projects:pin-resource', input),
+  updateProjectPin: input => ipcRenderer.invoke('projects:update-pin', input),
+  listResources: id => ipcRenderer.invoke('resources:list', id),
+  openResource: source => ipcRenderer.invoke('resources:open', source),
+  prepareResource: source => ipcRenderer.invoke('resources:prepare', source),
+  attachResource: input => ipcRenderer.invoke('resources:attach', input),
   projects: () => ipcRenderer.invoke('projects:view'),
   createProject: input => ipcRenderer.invoke('projects:create', input),
   updateProject: input => ipcRenderer.invoke('projects:update', input),

@@ -9,6 +9,8 @@ import { MaterialBar } from './MaterialBar';
 import { ProjectControls } from './ProjectControls';
 import { ProjectBrowser } from './ProjectBrowser';
 import type { ProjectState } from '../shared/contracts';
+import type { ProjectContext, ResourceSource } from '../shared/contracts';
+import { ResourceBrowser } from './ResourceBrowser';
 
 type Page = 'home' | 'artifacts' | 'capabilities' | 'settings';
 const statusLabels: Record<TaskView['status'], string> = {
@@ -32,8 +34,13 @@ function time(value: string) { return new Date(value).toLocaleTimeString('zh-CN'
 export function App() {
   const [tasks, setTasks] = useState<TaskView[]>([]);
   const [projectState, setProjectState] = useState<ProjectState>({ projects: [] });
+  const [projectContext, setProjectContext] = useState<ProjectContext>();
+  const [pinExclusions, setPinExclusions] = useState<Record<string, string[]>>({});
+  const [resourcePicker, setResourcePicker] = useState(false);
   const [newProject, setNewProject] = useState(false), [projectName, setProjectName] = useState('');
   const project = projectState.projects.find(p => p.id === projectState.currentId);
+  const activeContext = projectContext?.projectId === project?.id ? projectContext : undefined;
+  const initialPins = activeContext?.pins.filter(p => !(pinExclusions[project!.id] ?? []).includes(p.id)) ?? [];
   const projectDrafts = useRef<Record<string, string>>({});
   const projectMaterialDrafts = useRef<Record<string, { ticket: string; material: import('../shared/contracts').MaterialView }[]>>({});
   const [page, setPage] = useState<Page>('home');
@@ -65,7 +72,8 @@ export function App() {
   const title = (t: TaskView) => t.conversationTitle ?? tasks.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60) ?? t.goal;
   const selectedRef = useRef(selected); selectedRef.current = selected;
   const needsDecision = !!task && (['paused', 'awaiting_input', 'awaiting_approval', 'awaiting_reconciliation'].includes(task.status) || (task.status === 'cancelled' && !!task.unknownEffect));
-  useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); }, [selected]);
+  useEffect(() => { setEditingDecision(false); setLocalDecision(undefined); setResourcePicker(false); }, [selected, project?.id]);
+  useEffect(() => { let alive = true; if (project) void bridge.projectContext(project.id).then(c => { if (alive) setProjectContext(c); }).catch(() => setError('未能读取项目上下文，请检查原数据。')); else setProjectContext(undefined); return () => { alive = false; }; }, [project?.id, project?.revision]);
   useEffect(() => {
     if (!bridge.preview) void bridge.lastRun().then(id => { setSelected(value => value ?? id); setSelectionLoaded(true); }).catch(() => setSelectionLoaded(true));
   }, []);
@@ -96,9 +104,11 @@ export function App() {
   const create = (event: FormEvent) => {
     event.preventDefault();
     if (!goal.trim() || busy) return;
+    if (project && !activeContext) { setError('请等待项目说明和固定材料加载完成。'); return; }
     void run(async () => {
-      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: project ? undefined : folder?.id, projectId: project?.id, materialTickets: initialMaterials.map(m => m.ticket) });
+      const created = await bridge.createTask({ goal: goal.trim(), skill, folderGrant: project ? undefined : folder?.id, projectId: project?.id, materialTickets: initialMaterials.map(m => m.ticket), projectPinIds: initialPins.map(p => p.id), projectContextRevision: activeContext?.revision });
       setSelected(created.id); setGoal(''); setInitialMaterials([]); setInspector(false);
+      if (project) setPinExclusions(old => ({ ...old, [project.id]: [] }));
     });
   };
   const go = (next: Page) => { setPage(next); setSelected(undefined); setError(''); };
@@ -120,6 +130,16 @@ export function App() {
   const scopedActive = scopedLatest.filter(t => ['running', 'queued'].includes(t.status)).length;
   const scopedPending = scopedLatest.filter(t => t.status === 'awaiting_approval').length;
   const visible = scopedLatest.filter(t => (title(t) + ' ' + t.goal).toLowerCase().includes(query.toLowerCase()) && (filter === 'all' || (filter === 'active' ? ['running', 'queued', 'awaiting_input'].includes(t.status) : t.status === 'awaiting_approval')));
+  const pickResource = async (source: ResourceSource) => {
+    if (task) { await bridge.attachResource({ taskId: task.id, source }); }
+    else {
+      const prepared = await bridge.prepareResource(source);
+      if (initialPins.some(p => p.material.id === prepared.material.id) || initialMaterials.some(m => m.material.id === prepared.material.id)) await bridge.discardMaterialTicket(prepared.ticket);
+      else setInitialMaterials(old => [...old, prepared]);
+    }
+    setResourcePicker(false);
+  };
+  const resourcesVersion = tasks.map(t => `${t.id}:${t.projectId}:${t.artifacts.length}:${JSON.stringify(t.fileChanges)}`).join(',');
 
   return <div className={selected ? 'app task-open' : 'app'}>
     <aside className="sidebar">
@@ -127,7 +147,7 @@ export function App() {
       <button className="new-task" onClick={() => { go('home'); queueMicrotask(() => goalRef.current?.focus()); }}><Plus size={17} />新任务<span className="keycap">⌘ N</span></button>
       <nav aria-label="主导航">
         <button className={page === 'home' ? 'nav active' : 'nav'} onClick={() => go('home')}><Inbox size={18} />任务中心{pending > 0 && <span className="nav-count">{pending}</span>}</button>
-        <button className={page === 'artifacts' ? 'nav active' : 'nav'} onClick={() => go('artifacts')}><Layers size={18} />成果库</button>
+        <button className={page === 'artifacts' ? 'nav active' : 'nav'} onClick={() => go('artifacts')}><Layers size={18} />资源库</button>
         <button className={page === 'capabilities' ? 'nav active' : 'nav'} onClick={() => go('capabilities')}><ShieldCheck size={18} />能力与边界</button>
       </nav>
       <div className="sidebar-section"><span>工作项目</span><button className="text-button" aria-label="新建项目" onClick={() => setNewProject(!newProject)}>＋</button></div>
@@ -146,7 +166,7 @@ export function App() {
       </div>
     </aside>
     <div className="shell">
-      <header className="topbar"><div className="breadcrumb"><span>工作空间</span><ChevronRight size={14} /><strong>{selected ? '任务详情' : { home: '任务中心', artifacts: '成果库', capabilities: '能力与边界', settings: '连接设置' }[page]}</strong></div>
+      <header className="topbar"><div className="breadcrumb"><span>工作空间</span><ChevronRight size={14} /><strong>{selected ? '任务详情' : { home: '任务中心', artifacts: '资源库', capabilities: '能力与边界', settings: '连接设置' }[page]}</strong></div>
         <div className="topbar-right">{bridge.preview && <span className="preview-label">交互预览 · 不调用模型</span>}<span className="model-label"><Cpu size={14} />{connection?.model || '未连接模型'}</span>
           <button className="text-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceImport()))}>打开文件</button>
           <button className="text-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceUpdate({ visible: !workspace.visible })))}>工作区{workspace.tabs.length > 0 ? ` ${workspace.tabs.length}` : ''}</button>
@@ -159,10 +179,11 @@ export function App() {
         {page === 'home' && !task && <div className="home page-enter">
           <div className="home-heading"><div><h1>{project ? project.name : 'Agentic Workbench'}</h1><p>交办日常工作：整理、研究、写作与办公 · DeepSeek</p></div>{project && <button className="secondary small-button" onClick={() => void run(async () => setWorkspace(await bridge.workspaceUpdate({ visible: true })))}>项目文件与成果</button>}</div>
           <form className="composer" onSubmit={create}>
-            <div className="material-bar"><div className="material-chips">{initialMaterials.map(m => <span key={m.ticket} className="material-chip">{m.material.name} · {m.material.sha256.slice(0, 6)}<button type="button" disabled={busy} aria-label={`移除待发送材料：${m.material.name}`} onClick={() => void run(async () => { await bridge.discardMaterialTicket(m.ticket); setInitialMaterials(old => old.filter(item => item.ticket !== m.ticket)); })}>×</button></span>)}</div>
-              <button type="button" className="text-button" disabled={busy || initialMaterials.length >= 10} onClick={() => void run(async () => { const m = await bridge.prepareMaterial(); if (m) setInitialMaterials(old => [...old, m]); })}>＋引用文件材料</button><span>发送时交给 DeepSeek，不授权父目录；临时选择 10 分钟有效。</span></div>
+            <div className="material-bar"><div className="material-chips">{initialPins.map(p => <span className="material-chip" key={p.id}>固定：{p.material.name} · {p.material.sha256.slice(0, 6)}<button type="button" aria-label={`本次不引用：${p.material.name}`} onClick={() => setPinExclusions(old => ({ ...old, [project!.id]: [...(old[project!.id] ?? []), p.id] }))}>×</button></span>)}{initialMaterials.map(m => <span key={m.ticket} className="material-chip">{m.material.name} · {m.material.sha256.slice(0, 6)}<button type="button" disabled={busy} aria-label={`移除待发送材料：${m.material.name}`} onClick={() => void run(async () => { await bridge.discardMaterialTicket(m.ticket); setInitialMaterials(old => old.filter(item => item.ticket !== m.ticket)); })}>×</button></span>)}</div>
+              <button type="button" className="text-button" disabled={busy || initialMaterials.length + initialPins.length >= 10} onClick={() => void run(async () => { const m = await bridge.prepareMaterial(); if (m) setInitialMaterials(old => [...old, m]); })}>＋引用文件材料</button><button type="button" className="text-button" onClick={() => setResourcePicker(v => !v)}>@ 资源</button><span>发送时引用版本，按需读取，不授权父目录。</span></div>
+            {resourcePicker && <><button type="button" className="text-button" onClick={() => setResourcePicker(false)}>关闭资源选择</button><ResourceBrowser project={project} busy={busy} version={resourcesVersion} run={run} open={setWorkspace} pick={pickResource} /></>}
             <label className="sr-only" htmlFor="goal">任务目标</label>
-            <textarea id="goal" ref={goalRef} placeholder="描述目标，或选择项目后开始工作…" value={goal} onChange={e => setGoal(e.target.value)} maxLength={12000} rows={2} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
+            <textarea id="goal" ref={goalRef} placeholder="描述目标，输入 @ 选择资源…" value={goal} onChange={e => { setGoal(e.target.value); if (e.target.value.endsWith('@')) setResourcePicker(true); }} maxLength={12000} rows={2} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') create(e); }} />
             <div className="composer-bottom"><div className="composer-options">{project ? <span className="context-chip" title={project.rootEnabled ? project.root : '项目未授权目录'}><Folder size={16} /><span>{project.rootEnabled ? '项目目录已授权' : '项目无目录授权'}</span></span> : <><button type="button" className={folder ? 'context-chip attached' : 'context-chip'} onClick={() => void run(async () => { const grant = await bridge.chooseFolder(); if (grant) setFolder(grant); })}><Folder size={16} /><span>{folder ? folder.path.split(/[\\/]/).pop() : '选择项目目录'}</span></button>{folder && <button type="button" className="icon-button" aria-label="移除目录授权" onClick={() => setFolder(undefined)}><X size={14} /></button>}</>}<label className="skill-select"><span className="sr-only">任务指导</span><select value={skill} onChange={e => setSkill(e.target.value as SkillId)}>{skills.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}</select></label></div><button type="submit" className="submit-button" aria-label="开始任务" disabled={!goal.trim() || busy || project?.archived}>{busy ? <LoaderCircle size={18} className="spin" /> : <ArrowUp size={20} />}</button></div>
           </form>
           <div className="composer-note"><ShieldCheck size={14} />{(folder?.fileMode ?? fileMode) === 'snapshot' ? '选择项目即授权文件读写；改动前自动快照，可恢复。' : '已选项目可读取；文件与目录修改逐次确认。'}<span>⌘ / Ctrl + Enter</span></div>
@@ -182,6 +203,7 @@ export function App() {
           <div className="task-title"><Status task={task} /><h1>{title(task)}</h1><div className="task-meta"><span>{skills.find(s => s.id === task.skill)?.title}</span><span>第 {task.runNumber ?? 1} 轮</span><span>{task.steps} 个模型步骤</span></div></div>
           <div className="run-navigation"><label>执行轮次 <select aria-label="执行轮次" value={task.id} onChange={e => open(e.target.value)}>{tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id)).map(t => <option key={t.id} value={t.id}>第 {t.runNumber ?? 1} 轮 · {statusLabels[t.status]}{current?.id === t.id ? ' · 当前' : ''}</option>)}</select></label>{historical && <button className="secondary small-button" onClick={() => open(current!.id)}>回到当前轮次继续</button>}<details><summary>本轮目标</summary><p>{task.goal}</p></details></div>
           <TokenStats tasks={tasks.filter(t => (t.conversationId ?? t.id) === (task.conversationId ?? task.id))} />
+          {task.projectContext && <div className="run-project-context">本轮项目说明 v{task.projectContext.revision} · {task.projectContext.instructionHash.slice(0, 8)}{activeContext && task.projectContext.projectId === activeContext.projectId && task.projectContext.revision !== activeContext.revision ? ' · 项目上下文有更新，下轮采用' : ''}</div>}
           {task.progress && <div className="execution-progress" aria-label="执行进展"><span>窗口 {task.progress.window} · {task.steps - task.progress.windowStart}/{task.progress.windowSize} 步</span><span>工具结果 {task.progress.tools} · 错误 {task.progress.errors}</span><span>{task.progress.lastTool ? `最近：${task.progress.lastTool} · ${time(task.progress.lastAt!)}` : '尚无工具结果'}</span><small>不代表业务完成率</small></div>}
           {!!Object.keys(task.skillPins ?? {}).length && <div className="active-skills">已加载 Skills：{Object.entries(task.skillPins!).map(([id, hash]) => <span key={id}>{id} · {hash.slice(0, 8)}</span>)}</div>}
           <details className="permission-disclosure"><summary>工具权限 · 文件{task.fileMode === 'snapshot' ? '自动快照' : '逐次确认'} · Shell {hostEnabled ? task.hostMode === 'allow' ? '已授权' : '需确认' : '关闭'} · {task.root ?? '无项目目录'}</summary><section className="tool-permissions" aria-label="本次对话工具权限"><div><strong>本次对话工具权限</strong><span>{task.root ?? '尚未选择项目目录'}</span></div>
@@ -226,7 +248,8 @@ export function App() {
           </div>
           <section className="composer-dock" aria-label="对话输入区">
             {historical && !localDecision ? <div className="history-notice"><span>历史轮次不发送聊天；继续不会重放旧动作。</span><button className="primary small-button" onClick={() => open(current!.id)}>回到当前轮次</button></div> : <>
-            {!localDecision && (!needsDecision || editingDecision) && <MaterialBar key={task.id} task={task} busy={busy} run={run} open={setWorkspace} />}
+            {!localDecision && (!needsDecision || editingDecision) && <MaterialBar key={task.id} task={task} busy={busy} run={run} open={setWorkspace} resources={() => setResourcePicker(v => !v)} />}
+            {resourcePicker && !localDecision && (!needsDecision || editingDecision) && <><button className="text-button" onClick={() => setResourcePicker(false)}>关闭资源选择</button><ResourceBrowser project={project} busy={busy} version={resourcesVersion} run={run} open={setWorkspace} pick={pickResource} /></>}
             {!!task.queuedInput?.length && <div className="message-queue" aria-label="待发送消息"><div className="queue-heading">待发送 · {task.queuedInput.length}<span>{task.status === 'paused' ? '已暂停；排序或删除不启动，继续本轮后发送' : ['completed', 'cancelled', 'failed'].includes(task.status) ? '已暂停，点击立即发送继续' : needsDecision ? '等待本次决定；立即发送会作废旧决定' : '下一个工具边界合并发送'}</span></div>{task.queuedInput.map(item => <div className="queue-row" key={item.id}><p>{item.text}</p><button className="secondary small-button" disabled={busy || task.unknownEffect && task.status !== 'running'} onClick={() => {
               const send = async () => { const next = await bridge.manageQueue({ taskId: task.id, messageId: item.id, action: 'send' }); setSelected(next.id); };
               if (needsDecision && (task.status !== 'paused' || task.question || task.approval?.state === 'pending')) setLocalDecision({ title: '用补充要求替换当前决定？', detail: `将提前投递：${item.text}\n旧问题或审批将作废，不能再提交；其他排队消息继续等待。已开始的工具不会强杀或重放。${task.status === 'paused' ? '\n本轮仍暂停，需点击继续本轮。' : ''}`, confirmLabel: '作废旧决定并立即发送', confirm: send });
@@ -235,10 +258,10 @@ export function App() {
             {localDecision ? <ConsentPanel decision={localDecision} busy={busy} run={run} close={() => setLocalDecision(undefined)} />
               : task.status === 'paused' && !editingDecision ? <div className="pause-decision" aria-label="暂停与续跑"><div><strong>{task.pause?.reason === 'window' ? '执行窗口已结束' : task.pause?.reason === 'manual' ? '本轮已暂停' : '需要检查进展'}</strong><p>{task.pause?.detail}</p><small>继续同一 Run，不清零用量，也不代替工具授权。重启保持暂停。</small></div><div className="pause-actions"><button className="text-button" disabled={busy} onClick={() => setEditingDecision(true)}>补充要求</button><button className="primary small-button" disabled={busy || task.unknownEffect} onClick={() => void run(() => bridge.resumeTask(task.id))}>继续本轮</button></div></div>
               : needsDecision && !editingDecision ? <DecisionPanel task={task} busy={busy} hostEnabled={hostEnabled} run={run} supplement={() => setEditingDecision(true)} />
-                : <MessageComposer key={task.id} task={{ ...task, composerDraft: composerDrafts[task.id] ?? task.composerDraft }} busy={busy} run={run} sent={id => { setSelected(id); setEditingDecision(false); }} editing={needsDecision} back={() => setEditingDecision(false)} remember={text => setComposerDrafts(old => ({ ...old, [task.id]: text }))} />}</>}
+                : <MessageComposer key={task.id} task={{ ...task, composerDraft: composerDrafts[task.id] ?? task.composerDraft }} busy={busy} run={run} sent={id => { setSelected(id); setEditingDecision(false); }} editing={needsDecision} back={() => setEditingDecision(false)} remember={text => setComposerDrafts(old => ({ ...old, [task.id]: text }))} mention={() => setResourcePicker(true)} />}</>}
           </section>
         </div>}
-        {page === 'artifacts' && <div className="standard-page page-enter"><div className="page-eyebrow">可审阅，可带走</div><h1>成果库</h1><p className="page-description">经过确认的交付物集中在这里。每份成果都能回到它的来源任务。</p><div className="artifact-grid">{tasks.flatMap(t => t.artifacts.map(a => <button className="artifact-card" key={`${t.id}-${a.id}`} onClick={() => setArtifact({ task: t, artifact: a })}><span className="artifact-type"><FileText size={25} /><span>{a.name.split('.').pop()?.toUpperCase()}</span></span><h2>{a.name}</h2><p>{t.goal}</p><div><span>{bridge.preview ? '示例成果' : '已批准创建'} · {time(t.updatedAt)}</span><ArrowUpRight size={16} /></div></button>))}</div>{!tasks.some(t => t.artifacts.length) && <div className="empty-state bordered"><Layers size={30} /><h3>还没有已保存的成果</h3><p>批准任务中的写入申请后，成果会出现在这里。</p><button className="secondary" onClick={() => go('home')}>回到任务中心<ArrowUpRight size={15} /></button></div>}</div>}
+        {page === 'artifacts' && <div className="standard-page page-enter"><h1>资源库</h1><p className="page-description">材料与成果统一查看、引用和固定；成果是资源的一种来源，不复制文件。</p><ResourceBrowser project={project} version={resourcesVersion} busy={busy} run={run} open={setWorkspace} sourceTask={open} /></div>}
         {page === 'capabilities' && <div className="standard-page page-enter">
           <h1>能力与 Skills</h1>
           <p className="page-description">任务指导与 skill 包影响如何处理目标，但不会扩大工具权限。</p>

@@ -3,8 +3,9 @@ import { mkdirSync, chmodSync, existsSync, lstatSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { ModelMessage } from 'ai';
 import type { TaskView, EvidenceView } from '../shared/contracts';
-import type { MaterialSnapshot } from './materials';
+import { validateMaterialSnapshot, type MaterialSnapshot } from './materials';
 import { evidenceView, validateEvidence, type EvidenceSnapshot } from './evidence';
+import { validateRunContext } from './project-context';
 
 export interface ToolCall { toolCallId: string; toolName: string; input: unknown }
 export interface TaskRecord extends TaskView {
@@ -64,12 +65,27 @@ export class TaskStore {
     });
   }
   views(): TaskView[] { return this.db.prepare('SELECT v.body FROM task_views v JOIN tasks t ON t.id=v.id ORDER BY t.rowid DESC').all().map(r => JSON.parse(String(r.body)) as TaskView); }
+  archiveMaterial(material: MaterialSnapshot): void {
+    validateMaterialSnapshot(material);
+    const body = JSON.stringify(material), existing = this.db.prepare('SELECT body FROM material_versions WHERE id=?').get(material.id);
+    if (existing && existing.body !== body) throw new Error('Immutable material version changed');
+    this.db.prepare('INSERT OR IGNORE INTO material_versions VALUES (?,?)').run(material.id, body);
+    this.materialCache.set(material.id, material);
+  }
+  material(id: string): MaterialSnapshot {
+    const row = this.db.prepare('SELECT body FROM material_versions WHERE id=?').get(id);
+    if (!row) throw new Error('请恢复原始材料档案；版本缺失。');
+    const value = JSON.parse(String(row.body)) as MaterialSnapshot;
+    if (value.id !== id) throw new Error('Invalid material binding');
+    validateMaterialSnapshot(value); return value;
+  }
   get(id: string): TaskRecord {
     const row = this.db.prepare('SELECT body FROM tasks WHERE id=?').get(id);
     if (!row) throw new Error('Task not found');
     return this.hydrateMaterials(JSON.parse(String(row.body)) as TaskRecord);
   }
   private hydrateMaterials(task: TaskRecord): TaskRecord {
+    validateRunContext(task.projectContext);
     for (const [id, pointer] of Object.entries(task.evidenceSnapshots ?? {})) {
       let source = pointer;
       if (typeof source.content !== 'string') {
@@ -95,6 +111,7 @@ export class TaskStore {
     return task;
   }
   save(task: TaskRecord): void {
+    validateRunContext(task.projectContext);
     task.updatedAt = new Date().toISOString();
     const sources: Record<string, EvidenceView> = {};
     for (const [id, source] of Object.entries(task.evidenceSnapshots ?? {})) {
@@ -148,7 +165,7 @@ export function publicTask(task: TaskRecord): TaskView {
     parentRunId: task.parentRunId, runNumber: task.runNumber ?? 1,
     conversationTitle: task.conversationTitle ?? task.goal.split('\n')[0].slice(0, 60), materials: task.materials ?? [],
     usage: task.usage ?? [], question: task.question, queuedInput: task.queuedInput,
-    context: task.context, unknownEffect: Boolean(task.effectStarted),
+    context: task.context, projectContext: task.projectContext, unknownEffect: Boolean(task.effectStarted),
     fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask', fileChanges: task.fileChanges ?? [], undo: task.undo, skillPins: task.skillPins, webOrigins: task.webOrigins ?? [], composerDraft: task.composerDraft,
     pause: task.pause, pauseRequested: task.pauseRequested, progress: task.progress, sources: Object.values(task.evidenceSnapshots ?? {}).map(evidenceView)
   };

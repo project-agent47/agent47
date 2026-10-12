@@ -18,6 +18,7 @@ import { captureEvidence, evidenceView, validateEvidence, evidenceReadInput, rea
 import { inputKey, recordObservation } from './progress';
 
 export interface RuntimeServices {
+  projectContext?: (task: TaskRecord) => TaskView['projectContext'];
   fileAuthorized?: (task: TaskRecord) => boolean;
   hostEnabled?: () => boolean; executeHost?: HostExecutor;
   skills?: { catalog(): unknown[]; load(id: string, hash?: string): unknown; read(id: string, path: string, hash?: string): Promise<unknown> };
@@ -129,6 +130,10 @@ export class TaskRuntime {
     const task = this.store.get(id);
     if (this.list().find(t => t.id === id)?.latestRunId !== id) throw new Error('请回到当前轮次引用材料。');
     validateMaterialSnapshot(material);
+    if (!replaceId && task.materials?.some(m => m.id === material.id)) {
+      if (JSON.stringify(task.materialSnapshots?.[material.id]) !== JSON.stringify(material)) throw new Error('Immutable material version changed');
+      return publicTask(task);
+    }
     const existing = task.materials?.find(m => m.sha256 === material.sha256 && m.name === material.name && task.materialSnapshots?.[m.id]?.path === material.path && m.sourceTaskId === material.sourceTaskId && JSON.stringify(m.selection) === JSON.stringify(material.selection));
     if (existing) return publicTask(task);
     if (replaceId && !task.materials?.some(m => m.id === replaceId)) throw new Error('请重新选择材料。');
@@ -136,7 +141,7 @@ export class TaskRuntime {
     if (Buffer.byteLength(material.content) > 1_000_000 || Object.values(task.materialSnapshots ?? {}).reduce((n, m) => n + m.bytes, 0) + material.bytes > 5_000_000)
       throw new Error('请使用较小材料：单份 1 MB，会话版本合计 5 MB。');
     task.materialSnapshots ??= {}; task.materialSnapshots[material.id] = material;
-    const view = { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source, sourceTaskId: material.sourceTaskId, sourceArtifactId: material.sourceArtifactId, selection: material.selection };
+    const view = { id: material.id, name: material.name, sha256: material.sha256, bytes: material.bytes, capturedAt: material.capturedAt, source: material.source, frozen: material.frozen, sourceTaskId: material.sourceTaskId, sourceArtifactId: material.sourceArtifactId, selection: material.selection };
     task.materials = (task.materials ?? []).filter(m => m.id !== replaceId); task.materials.push(view); this.save(task); return publicTask(task);
   }
   removeMaterial(id: string, materialId: string): TaskView {
@@ -146,7 +151,7 @@ export class TaskRuntime {
     if (!task.authorizedMaterialIds?.includes(materialId) && !task.queuedInput?.some(q => q.materials?.some(m => m.id === materialId))) delete task.materialSnapshots?.[materialId];
     this.save(task); return publicTask(task);
   }
-  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask', materials: MaterialSnapshot[] = [], binding?: { originProjectId?: string; rootProjectId?: string; rootProjectRevision?: number }): TaskView {
+  create(goal: string, skill: SkillId, root?: string, fileMode?: 'snapshot' | 'ask', materials: MaterialSnapshot[] = [], binding?: { originProjectId?: string; rootProjectId?: string; rootProjectRevision?: number; projectContext?: TaskView['projectContext'] }): TaskView {
     if (root && [...this.restoringRoots].some(other => overlappingRoots(root, other))) throw new Error('请等待文件快照恢复完成。');
     if (!goal.trim() || goal.length > 12000) throw new Error('Task goal must contain 1–12000 characters');
     if (materials.length > 10 || materials.reduce((n, m) => n + m.bytes, 0) > 5_000_000 || materials.some(m => m.bytes > 1_000_000 || m.bytes !== Buffer.byteLength(m.content) || sha256(m.content) !== m.sha256)) throw new Error('请使用有效且总计不超过 5 MB 的材料版本。');
@@ -158,7 +163,7 @@ export class TaskRuntime {
       fileMode: fileMode ?? this.services.fileMode?.() ?? 'ask', hostMode: 'ask', fileChanges: []
     };
     task.materialSnapshots = Object.fromEntries(materials.map(m => [m.id, m]));
-    task.materials = materials.map(({ id, name, sha256, bytes, capturedAt, source }) => ({ id, name, sha256, bytes, capturedAt, source }));
+    task.materials = materials.map(({ id, name, sha256, bytes, capturedAt, source, frozen, sourceTaskId, sourceArtifactId }) => ({ id, name, sha256, bytes, capturedAt, source, frozen, sourceTaskId, sourceArtifactId }));
     task.authorizedMaterialIds = materials.map(m => m.id);
     this.initProgress(task);
     this.event(task, 'user', task.goal, task.materials); this.save(task); this.kick();
@@ -435,6 +440,7 @@ export class TaskRuntime {
       conversationTitle: parent.conversationTitle ?? parent.goal.split('\n')[0].slice(0, 60),
       materials: structuredClone(parent.materials ?? []), materialSnapshots: structuredClone(parent.materialSnapshots ?? {}),
       evidenceSnapshots: structuredClone(parent.evidenceSnapshots ?? {}), originProjectId: parent.originProjectId, rootProjectId: parent.rootProjectId, rootProjectRevision: parent.rootProjectRevision,
+      projectContext: this.services.projectContext ? this.services.projectContext(parent) : structuredClone(parent.projectContext),
       authorizedMaterialIds: [...new Set([...(parent.authorizedMaterialIds ?? []), ...materials.map(m => m.id), ...(includeQueued ? (parent.queuedInput ?? []).flatMap(q => (q.materials ?? []).map(m => m.id)) : [])])],
       fileMode: parent.fileMode ?? 'ask', hostMode: parent.hostMode ?? 'ask', fileChanges: [], skillPins: structuredClone(parent.skillPins ?? {}), webOrigins: structuredClone(parent.webOrigins ?? [])
     };
@@ -514,13 +520,14 @@ export class TaskRuntime {
     this.save(task);
     const draft = { text: '', reasoning: '' }; this.drafts.set(task.id, draft);
     const context: ModelContext = {
+      projectContext: task.projectContext,
       purpose, hostExecution: this.services.hostEnabled?.() ?? false, fileMode: task.fileMode ?? 'ask', hostMode: task.hostMode ?? 'ask',
       catalog: JSON.stringify(this.services.skills?.catalog() ?? []), webOrigins: task.webOrigins ?? [],
       browserTabs: this.services.browser?.tabs(task.id) ?? [],
       sources: Object.values(task.evidenceSnapshots ?? {}).slice(-32).map(evidenceView),
       materials: (task.authorizedMaterialIds ?? []).map(id => {
         const m = task.materialSnapshots?.[id];
-        return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt, selection: m.selection } : undefined;
+        return m ? { id, name: m.name, sha256: m.sha256, bytes: m.bytes, capturedAt: m.capturedAt, selection: m.selection, frozen: m.frozen } : undefined;
       }).filter(Boolean),
       onDelta: (kind, text) => {
         if (signal.aborted || this.stopped) return;
@@ -669,9 +676,10 @@ export class TaskRuntime {
               }
               if (this.stopped) return;
               task = this.store.get(id); task.effectStarted = undefined;
-              const change = value as { snapshotId?: string; path?: string };
+              const change = value as { snapshotId?: string; path?: string; sha256?: string };
               if (change?.snapshotId && !task.fileChanges?.some(item => item.id === change.snapshotId)) {
-                task.fileChanges ??= []; task.fileChanges.push({ id: change.snapshotId, path: change.path!, state: 'saved', kind: action.kind as 'project_write' | 'directory' });
+                task.fileChanges ??= []; task.fileChanges.push({ id: change.snapshotId, path: change.path!, state: 'saved', kind: action.kind as 'project_write' | 'directory',
+                  ...(action.kind === 'project_write' ? { sha256: change.sha256, bytes: Buffer.byteLength(action.content) } : {}) });
               }
               if (task.approval) task.approval.state = 'applied';
               this.toolResult(task, call, value); this.event(task, 'tool', `${call.toolName} 已执行 · ${JSON.stringify(value).slice(0, 1000)}`); this.save(task);

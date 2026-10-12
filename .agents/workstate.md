@@ -1,5 +1,13 @@
 # Current workstate
 
+- Current master ee69dc3e89b36c233b4d0631baf1251d04aeb149: owner-approved PR14 self-reviewed/merged; fresh207unit/build/lint/native Project fixture and master CI38204678037 all four success.
+- Active P1b feat/project-context-resources. Owner asked to unify everyday materials/artifacts/resources, not build parallel managers. Source contract docs/project-context-resources.md; independent PR required, do not auto-merge this increment.
+- Shared ResourceBrowser replaces global artifact library and powers scoped Project resources and @ picker. Resource projection dedups same origin+version, saved artifact plus pin one row; new verified project file outputs record hash/bytes, legacy writes not fabricated/backfilled.
+- Project instructions<=6000 and immutable per-Run manifest; new Run adopts current Project settings, active Run/history untouched. Pins<=10/5MB metadata-only by default, explicit send/check revision, readMaterial only after selected reference.
+- Pin bodies reuse TaskStore.material_versions across same source+version; Project holds associations only. Fixed versions survive source change/deletion; refresh/unpin explicit and history retained. Viewing/picking/pinning grants no parent directory, host/browser trust or other-chat context.
+- projects.db schema2 backed up before upgrade; schema marker and context table transaction; old schema1 app fails closed. Cross-DB archive/pin binding not atomic, orphan immutable versions possible but no half-bound grant. No automatic cleanup.
+- P1b build/lint219unit24UI/native fixture/design42pairs min4.70/audit0 passed in development; final CI/live proof pending. Fixture script fixed UI open via actual MaterialBar and continuation via pause/resume rather than injecting a steering message that correctly superseded remaining intent; no production queue behavior weakened.
+
 - Current base master f270873: PR12 source evidence and PR13 Windows async task-ID harness repair merged in prior increment; final master four CI succeeded.
 - Active P1a branch feat/local-project-entry. Owner approved implementation for daily-work automation/intelligence, not a coding IDE or scheduler. Independent PR required; do not auto-merge new increment.
 - P1a lightweight project organization, reusable folder authorization, scoped file/artifact viewer and conversation navigation. See docs/local-project-entry.md for actual contracts, migration and exclusions.

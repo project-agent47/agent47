@@ -9,6 +9,7 @@
     "node": ">=22.12"
   },
   "scripts": {
+    "test:resources:native": "node scripts/e2e-resources-context-native.mjs",
     "test:projects:native": "node scripts/e2e-projects-native.mjs",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",

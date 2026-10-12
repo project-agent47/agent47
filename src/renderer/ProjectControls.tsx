@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { bridge } from './bridge';
 import type { FolderGrant, ProjectView } from '../shared/contracts';
+import { ProjectContextPanel } from './ProjectContextPanel';
 
 export function ProjectControls({ project, busy, run }: { project: ProjectView; busy: boolean; run: (op: () => Promise<unknown>) => Promise<void> }) {
   const [name, setName] = useState(project.name), [folder, setFolder] = useState<FolderGrant>();
   return <div className="project-controls" aria-label="项目设置">
     <strong>{project.name}{project.archived ? ' · 已归档' : ''}</strong>
     <span className="project-root" title={project.root}>{project.rootEnabled ? project.root : '无目录授权 · 可直接讨论或引用材料'}</span>
+    <ProjectContextPanel project={project} busy={busy} run={run} />
     <details><summary>项目设置</summary><div className="project-settings">
       <label>项目名称<input aria-label="项目名称" value={name} maxLength={96} onChange={e => setName(e.target.value)} /></label>
       <button className="secondary small-button" disabled={busy || !name.trim()} onClick={() => void run(() => bridge.updateProject({ id: project.id, expectedRevision: project.revision, name }))}>保存名称</button>

@@ -21,6 +21,7 @@ import { Workspace } from './workspace';
 import { pageMessage } from '../shared/web-capture';
 import { ProjectStore } from '../core/projects';
 import { existsSync } from 'node:fs';
+import { Resources, resourceSource, materialView } from './resources';
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'agent47', privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -76,6 +77,7 @@ async function boot(): Promise<void> {
   projects.reconcile(store.list());
   const workspacePath = (id?: string) => join(root, id ? `workspace-project-${id}.json` : 'workspace.json');
   const workspace = new Workspace(workspacePath(projects.current()), store, artifacts, () => window, () => window?.webContents.send('tasks:changed')); await workspace.start();
+  const resources = new Resources(projects, store, workspace);
   handle('workspace:view', () => workspace.view());
   handle('workspace:open', value => workspace.openSource(value as Parameters<Workspace['openSource']>[0]));
   handle('workspace:import', () => workspace.importFile());
@@ -110,6 +112,7 @@ async function boot(): Promise<void> {
     }
   };
   runtime = new TaskRuntime(store, process.env.AGENT47_SMOKE === '1' ? fixture : driver, artifacts, changed, { skills, executeHost, hostEnabled: () => hostExecution, fileMode: () => fileMode, snapshots, readWeb, fileAuthorized: task => projects.allowed(task),
+    projectContext: task => { const id = projects.projectFor(task.conversationId ?? task.id); return id ? resources.runContext(id) : undefined; },
     browser: { tabs: id => workspace.browserTabs(id), read: (id, name, input, signal) => workspace.browserRead(id, name, input, signal),
       prepare: (id, call) => workspace.browserPrepare(id, call), validate: (id, action) => workspace.browserValidate(id, action), execute: (id, action, signal) => workspace.browserExecute(id, action, signal) } });
   protocol.handle('agent47', request => {
@@ -174,6 +177,37 @@ async function boot(): Promise<void> {
     store.rememberRun(id); if (id) projects.remember(id, projects.projectFor(store.get(id).conversationId ?? id));
   });
   const materialTickets = new Map<string, { material: import('../core/materials').MaterialSnapshot; at: number }>();
+  handle('projects:context', value => resources.context(idSchema.parse(value)));
+  handle('projects:instructions', value => {
+    const input = z.object({ id: idSchema, expectedRevision: z.number().int().nonnegative(), instructions: z.string().max(6000) }).strict().parse(value);
+    projects.saveContext(input.id, input.expectedRevision, { instructions: input.instructions }); changed(); return resources.context(input.id);
+  });
+  handle('resources:list', value => resources.list(value === undefined ? undefined : idSchema.parse(value)));
+  handle('resources:open', value => resources.open(resourceSource.parse(value)));
+  const prepareResource = (material: import('../core/materials').MaterialSnapshot) => {
+    for (const [id, t] of materialTickets) if (Date.now() - t.at > 600000) materialTickets.delete(id);
+    if (materialTickets.size >= 20) throw new Error('请稍后重试：待发送材料过多。');
+    const ticket = randomUUID(); materialTickets.set(ticket, { material, at: Date.now() }); return { ticket, material: materialView(material) };
+  };
+  handle('resources:prepare', async value => prepareResource(await resources.capture(resourceSource.parse(value))));
+  handle('resources:attach', async value => {
+    const input = z.object({ taskId: idSchema, source: resourceSource }).strict().parse(value);
+    return runtime.attachMaterial(input.taskId, await resources.capture(input.source));
+  });
+  handle('projects:pin-resource', async value => {
+    const input = z.object({ projectId: idSchema, expectedRevision: z.number().int().nonnegative(), source: resourceSource.optional(), ticket: idSchema.optional() }).strict().refine(v => !!v.source !== !!v.ticket).parse(value);
+    const ticket = input.ticket ? materialTickets.get(input.ticket) : undefined;
+    if (input.ticket && (!ticket || Date.now() - ticket.at > 600000)) throw new Error('请重新选择材料：临时选择已过期。');
+    const material = input.source ? await resources.capture(input.source) : ticket!.material;
+    const source = input.source;
+    const sourceProject = source?.kind === 'projectFile' ? source.projectId : source?.kind === 'pin' ? projects.context(source.projectId).pins.find(p => p.id === source.pinId)?.originProjectId : undefined;
+    const result = resources.pinMaterial(input.projectId, input.expectedRevision, material, sourceProject);
+    if (input.ticket) materialTickets.delete(input.ticket); changed(); return result;
+  });
+  handle('projects:update-pin', async value => {
+    const input = z.object({ projectId: idSchema, expectedRevision: z.number().int().nonnegative(), pinId: idSchema, remove: z.boolean().optional() }).strict().parse(value);
+    const result = await resources.updatePin(input.projectId, input.expectedRevision, input.pinId, input.remove); changed(); return result;
+  });
   handle('materials:discard', value => { materialTickets.delete(idSchema.parse(value)); });
   handle('materials:prepare', async () => {
     const material = await workspace.chooseMaterial(); if (!material) return;
@@ -187,7 +221,7 @@ async function boot(): Promise<void> {
     return material ? runtime.attachMaterial(taskId, material) : runtime.list().find(t => t.id === taskId);
   });
   handle('tasks:create', async value => {
-    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional(), materialTickets: z.array(idSchema).max(10).optional(), projectId: idSchema.optional() }).strict().parse(value);
+    const input = z.object({ goal: z.string().trim().min(1).max(12000), skill: z.enum(['general', 'review', 'deliver']), folderGrant: z.string().uuid().optional(), materialTickets: z.array(idSchema).max(10).optional(), projectId: idSchema.optional(), projectPinIds: z.array(idSchema).max(10).optional(), projectContextRevision: z.number().int().nonnegative().optional() }).strict().parse(value);
     const folder = input.folderGrant ? grants.get(input.folderGrant) : undefined;
     if (input.folderGrant && !folder) throw new Error('Folder permission expired. Select the folder again.');
     if (!providerView().configured && process.env.AGENT47_SMOKE !== '1') throw new Error('请先在连接设置中配置模型。');
@@ -202,8 +236,18 @@ async function boot(): Promise<void> {
     if (project?.archived) throw new Error('请先恢复项目，再新建会话。');
     if (project && folder) throw new Error('请在项目目录设置里授权，不覆盖本轮目录。');
     if (project?.rootEnabled) await projects.folder(project.id);
+    const context = project ? resources.context(project.id) : undefined;
+    if (input.projectContextRevision !== undefined && input.projectContextRevision !== context?.revision) throw new Error('请重新审阅项目说明和固定材料：版本已变化。');
+    if (input.projectPinIds?.length && (!context || input.projectContextRevision === undefined || new Set(input.projectPinIds).size !== input.projectPinIds.length)) throw new Error('请明确选择当前项目的固定版本。');
+    for (const pinId of input.projectPinIds ?? []) {
+      const pin = projects.context(project!.id).pins.find(p => p.id === pinId);
+      if (!pin) throw new Error('请重新选择固定材料：列表已变化。');
+      materials.push(store.material(pin.materialId));
+    }
+    if (new Set(materials.map(m => m.id)).size !== materials.length) throw new Error('请移除重复的材料版本。');
+    const { pins, ...manifest } = context ?? { pins: [] }; void pins;
     const result = runtime.create(input.goal, input.skill, project?.rootEnabled ? project.root : folder?.path, project?.rootEnabled ? project.fileMode : folder?.fileMode, materials,
-      project ? { originProjectId: project.id, ...(project.rootEnabled ? { rootProjectId: project.id, rootProjectRevision: project.rootRevision } : {}) } : undefined);
+      project ? { originProjectId: project.id, projectContext: manifest as import('../shared/contracts').RunProjectContext, ...(project.rootEnabled ? { rootProjectId: project.id, rootProjectRevision: project.rootRevision } : {}) } : undefined);
     if (project) projects.register(result.id, project.id);
     for (const id of input.materialTickets ?? []) materialTickets.delete(id); return result;
   });
