@@ -12,6 +12,7 @@ import type { Workspace } from '../src/main/workspace';
 import { sha256 } from '../src/core/tools';
 import { validateRunContext } from '../src/core/project-context';
 import type { MaterialSnapshot } from '../src/core/materials';
+import { sdkDriver } from '../src/core/model';
 
 const closes: (() => void)[] = [];
 afterEach(() => closes.splice(0).forEach(f => f()));
@@ -86,6 +87,25 @@ test('resource IPC rejects arbitrary roots, proposals and mismatched versions', 
 test('context manifest integrity check rejects changed instructions', () => {
   const context = { projectId: randomUUID(), name: '日常', revision: 1, instructions: 'original', instructionHash: sha256('original') };
   validateRunContext(context); expect(() => validateRunContext({ ...context, instructions: 'modified' })).toThrow('hash');
+});
+test('AI SDK request carries current manifest with explicit replacement of history preferences', async () => {
+  let body: { messages: { role: string; content: string }[] } | undefined;
+  const transport: typeof fetch = async (_url, init) => {
+    body = JSON.parse(String(init!.body));
+    const response = { id: 'fixture', object: 'chat.completion.chunk', created: 0, model: 'deepseek-fixture', choices: [{ index: 0, delta: { role: 'assistant', content: 'done' }, finish_reason: null }] };
+    const end = { ...response, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+    return new Response(`data: ${JSON.stringify(response)}\n\ndata: ${JSON.stringify(end)}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const driver = sdkDriver(() => ({ baseURL: 'https://fixture.invalid/v1', model: 'deepseek-fixture', apiKey: 'synthetic' }), transport);
+  await driver([{ role: 'assistant', content: 'OBSOLETE_RULE' }, { role: 'user', content: '继续' }], randomUUID(), new AbortController().signal, 'general', {
+    projectContext: { projectId: randomUUID(), name: '日常', revision: 2, instructions: 'CURRENT_RULE', instructionHash: sha256('CURRENT_RULE') }
+  });
+  const system = body!.messages.find(m => m.role === 'system')!.content;
+  expect(system).toContain('CURRENT RUN PROJECT CONTEXT:');
+  expect(system).toContain('"instructions":"CURRENT_RULE"');
+  expect(system).toContain('REPLACES earlier project preferences');
+  expect(system.indexOf('CURRENT RUN PROJECT CONTEXT:')).toBeGreaterThan(system.indexOf('Recent observed source receipts'));
+  expect(body!.messages.find(m => m.role === 'assistant')!.content).toBe('OBSOLETE_RULE');
 });
 test('schema one upgrade keeps a consistent backup and commits schema with context table', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'a47-project-migration-'))), path = join(root, 'projects.db');

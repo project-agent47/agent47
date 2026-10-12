@@ -64,7 +64,7 @@ try {
   await writeFile(file, '# 新版日常材料\n' + updated);
   await page.getByRole('button', { name: '任务中心', exact: true }).click();
   await expect(page.locator('.home .material-chips')).toContainText('固定：daily.md');
-  await page.getByLabel('任务目标').fill('使用 readMaterial 读取本条消息已选 daily.md，返回其中 EVIDENCE_完整标记并遵循项目说明；不读取目录、不写文件、不猜测。');
+  await page.getByLabel('任务目标').fill('使用 readMaterial 读取本条消息已选 daily.md，返回其中以 EVIDENCE_ 开头的完整证据字符串并遵循本轮项目说明；不读取目录、不写文件、不猜测。');
   await page.getByLabel('开始任务', { exact: true }).click();
   await expect.poll(async () => (await tasks()).length).toBe(1);
   const firstId = (await tasks())[0].id; await done(firstId);
@@ -94,7 +94,7 @@ try {
   await expect(page.getByLabel('继续对话', { exact: true })).toHaveValue('保留草稿 @');
   await expect.poll(async () => (await tasks())[0].materials.some(m => m.id === newer.id)).toBe(true);
   if ((await tasks()).length !== 1) throw new Error('Selecting reference sent message');
-  await page.getByLabel('继续对话', { exact: true }).fill(`只使用 readMaterial 读取 id=${newer.id} 这份新固定版本，调用 writeArtifact 保存 summary.md，包含材料中的 EVIDENCE_完整标记并遵循当前项目说明，然后回复。不要沿用旧版，不使用目录或 Shell。`);
+  await page.getByLabel('继续对话', { exact: true }).fill(`只使用 readMaterial 读取 id=${newer.id} 这份新固定版本，调用 writeArtifact 保存 summary.md，包含材料中以 EVIDENCE_ 开头的完整证据字符串并遵循本轮项目说明，然后回复。不要沿用旧版或旧轮次说明，不使用目录或 Shell。`);
   await page.getByRole('button', { name: '发送消息', exact: true }).click();
   await expect.poll(async () => (await tasks()).length).toBe(2); const secondId = (await tasks())[0].id; await done(secondId);
   if (!live) await fixtureIntent(secondId, newer.id, true);
