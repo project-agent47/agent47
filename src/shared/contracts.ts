@@ -4,7 +4,12 @@ export interface ExecutionProgress { window: number; windowStart: number; window
 export type SkillId = 'general' | 'review' | 'deliver';
 export interface TaskEvent { id: string; at: string; kind: 'user' | 'assistant' | 'reasoning' | 'tool' | 'system' | 'error'; text: string; materials?: MaterialView[] }
 export interface Artifact { id: string; name: string; content: string; sha256: string }
-export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; sourceTaskId?: string; sourceArtifactId?: string; selection?: { start: number; end: number; targetPath?: string } }
+export interface MaterialView { id: string; name: string; sha256: string; bytes: number; capturedAt: string; source: 'file' | 'artifact'; frozen?: true; sourceTaskId?: string; sourceArtifactId?: string; selection?: { start: number; end: number; targetPath?: string } }
+export interface ProjectPin { id: string; materialId: string; resourceKey: string; originProjectId?: string }
+export interface ProjectContext { projectId: string; name: string; revision: number; instructions: string; instructionHash: string; pins: { id: string; material: MaterialView }[] }
+export interface RunProjectContext { projectId: string; name: string; revision: number; instructions: string; instructionHash: string }
+export type ResourceSource = { kind: 'artifact'; taskId: string; artifactId: string } | { kind: 'pin'; projectId: string; pinId: string; expectedHash: string } | { kind: 'projectFile'; projectId: string; path: string; expectedHash?: string } | { kind: 'taskFile'; taskId: string; path: string; expectedHash: string };
+export interface ResourceView { key: string; name: string; source: ResourceSource; kind: 'artifact' | 'material'; sha256: string; bytes: number; taskId?: string; projectNames?: string[]; pins: { projectId: string; pinId: string }[] }
 export interface EvidenceView {
   id: string; kind: 'material' | 'project' | 'web'; name: string; url?: string;
   observedAt: string; versionHash: string; contentHash: string; offset: number; end: number;
@@ -15,7 +20,7 @@ export interface TokenUsage { id: string; at: string; purpose: 'turn' | 'compact
 export interface SkillView { id: string; name: string; description: string; enabled: boolean; hash: string; files: string[] }
 export interface SkillImport { ticket: string; skill: SkillView; instructions: string; replaces?: string; resources?: Record<string, string> }
 export interface ExecutionSettings { hostExecution: boolean; fileMode?: 'snapshot' | 'ask' }
-export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored'; kind?: 'project_write' | 'directory' }
+export interface FileChange { id: string; path: string; state: 'saved' | 'restored' | 'cleaned'; cleanedFrom?: 'saved' | 'restored'; kind?: 'project_write' | 'directory'; sha256?: string; bytes?: number }
 export interface RunUndo { state: 'running' | 'completed' | 'partial'; restored: number; conflicts: { path: string; error: string }[]; startedAt: string }
 export interface SnapshotSettings { retentionDays: 0 | 7 | 30 | 90; count: number; bytes: number; storagePath: string }
 export interface QuestionItem {
@@ -38,6 +43,7 @@ export interface TaskView {
   approval?: Approval; steps: number;
   conversationId?: string; goalId?: string; parentRunId?: string; runNumber?: number;
   conversationTitle?: string; latestRunId?: string; materials?: MaterialView[]; projectId?: string;
+  projectContext?: RunProjectContext;
   usage?: TokenUsage[]; draft?: { text: string; reasoning: string };
   question?: UserQuestion; queuedInput?: { id: string; text: string; mode: 'queue' | 'steer' | 'followup'; materials?: MaterialView[] }[];
   composerDraft?: string;
@@ -55,12 +61,20 @@ export interface TaskView {
 }
 export interface ProviderInput { baseURL: string; model: string; apiKey?: string }
 export interface ProviderView { baseURL: string; model: string; configured: boolean; secureStorage: boolean }
-export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[]; projectId?: string }
+export interface CreateInput { goal: string; skill: SkillId; folderGrant?: string; materialTickets?: string[]; projectId?: string; projectPinIds?: string[]; projectContextRevision?: number }
 export interface ProjectView { id: string; name: string; revision: number; root?: string; rootRevision: number; rootEnabled: boolean; fileMode: 'snapshot' | 'ask'; pinned: boolean; archived: boolean; createdAt: string; updatedAt: string }
 export interface ProjectFileList { path: string; entries: { name: string; directory: boolean }[]; nextOffset?: number }
 export interface ProjectState { projects: ProjectView[]; currentId?: string }
 export interface FolderGrant { id: string; path: string; fileMode?: 'snapshot' | 'ask' }
 export interface AgentBridge {
+  projectContext(id: string): Promise<ProjectContext>;
+  saveProjectInstructions(input: { id: string; expectedRevision: number; instructions: string }): Promise<ProjectContext>;
+  pinResource(input: { projectId: string; expectedRevision: number; source?: ResourceSource; ticket?: string }): Promise<ProjectContext>;
+  updateProjectPin(input: { projectId: string; expectedRevision: number; pinId: string; remove?: boolean }): Promise<ProjectContext>;
+  listResources(projectId?: string): Promise<ResourceView[]>;
+  openResource(source: ResourceSource): Promise<WorkspaceState>;
+  prepareResource(source: ResourceSource): Promise<{ ticket: string; material: MaterialView }>;
+  attachResource(input: { taskId: string; source: ResourceSource }): Promise<TaskView>;
   projects(): Promise<ProjectState>;
   createProject(input: { name: string; clientRequestId: string }): Promise<ProjectView>;
   updateProject(input: { id: string; expectedRevision: number; name?: string; pinned?: boolean; archived?: boolean }): Promise<ProjectView>;

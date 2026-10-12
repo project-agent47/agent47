@@ -137,7 +137,7 @@ function ApprovalPanel({ task, busy, hostEnabled, run, supplement }: { task: Tas
 }
 
 /** Kept separate from decision forms; unmount preserves draft, never sends it. */
-export function MessageComposer({ task, busy, run, sent, editing, back, remember }: { task: TaskView; busy: boolean; run: Run; sent: (id: string) => void; editing: boolean; back: () => void; remember: (text: string) => void }) {
+export function MessageComposer({ task, busy, run, sent, editing, back, remember, mention }: { task: TaskView; busy: boolean; run: Run; sent: (id: string) => void; editing: boolean; back: () => void; remember: (text: string) => void; mention?: () => void }) {
   const [text, setText] = useState(task.composerDraft ?? ''), [draftError, setDraftError] = useState('');
   const latest = useRef(task.composerDraft ?? ''), timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), writes = useRef(Promise.resolve());
   const saved = useRef(task.composerDraft ?? ''), mounted = useRef(true);
@@ -162,6 +162,7 @@ export function MessageComposer({ task, busy, run, sent, editing, back, remember
     });
   }}>
     <label className="sr-only" htmlFor="reply">继续对话</label><textarea id="reply" disabled={busy} value={text} onChange={e => {
+      if (e.target.value.endsWith('@')) mention?.();
       const next = e.target.value; setText(next); remember(next); latest.current = next; clearTimeout(timer.current); timer.current = setTimeout(() => { void persist().catch(() => {}); }, 250);
     }} maxLength={12000} rows={2} placeholder="补充要求或继续追问…" onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
     {draftError && <p className="decision-error" role="alert">{draftError}<button type="button" className="text-button" onClick={() => void persist().then(() => setDraftError('')).catch(() => {})}>重试保存</button></p>}

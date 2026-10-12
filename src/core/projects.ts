@@ -4,8 +4,8 @@ import { chmodSync, existsSync, lstatSync } from 'node:fs';
 import { lstat, readdir, realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import type { ProjectView, TaskView } from '../shared/contracts';
-import { safeProjectPath } from './tools';
+import type { ProjectView, TaskView, ProjectPin } from '../shared/contracts';
+import { safeProjectPath, sha256 } from './tools';
 import type { TaskRecord } from './store';
 
 const schema = z.object({
@@ -22,11 +22,40 @@ export class ProjectStore {
     this.db = new DatabaseSync(path); chmodSync(path, 0o600);
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);');
     const version = this.db.prepare('SELECT value FROM meta WHERE key=?').get('schema');
-    if (version && version.value !== '1') throw new Error('Unsupported project schema; preserve data');
-    this.db.exec('CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS membership(conversation TEXT PRIMARY KEY,project TEXT NOT NULL); CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,project TEXT NOT NULL); CREATE TABLE IF NOT EXISTS navigation(project TEXT PRIMARY KEY,run TEXT NOT NULL);');
-    this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('schema', '1');
+    if (version && !['1', '2'].includes(String(version.value))) throw new Error('Unsupported project schema; preserve data');
+    if (version?.value === '2' && !this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_context'").get()) {
+      this.db.close(); throw new Error('Project context table missing; preserve data and restore the complete database');
+    }
+    if (version?.value === '1' && !existsSync(path + '.before-context')) { this.db.prepare('VACUUM INTO ?').run(path + '.before-context'); chmodSync(path + '.before-context', 0o600); }
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.exec('CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS membership(conversation TEXT PRIMARY KEY,project TEXT NOT NULL); CREATE TABLE IF NOT EXISTS requests(id TEXT PRIMARY KEY,body TEXT NOT NULL,project TEXT NOT NULL); CREATE TABLE IF NOT EXISTS navigation(project TEXT PRIMARY KEY,run TEXT NOT NULL); CREATE TABLE IF NOT EXISTS project_context(project TEXT PRIMARY KEY,body TEXT NOT NULL)');
+      this.db.prepare('INSERT INTO meta VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run('schema', '2');
+      this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
     if (Object.values(this.db.prepare('PRAGMA quick_check').get()!)[0] !== 'ok') throw new Error('Project integrity failed');
     this.list();
+    for (const p of this.list()) this.context(p.id);
+  }
+  context(id: string): { revision: number; instructions: string; instructionHash: string; pins: ProjectPin[] } {
+    this.get(id);
+    const row = this.db.prepare('SELECT body FROM project_context WHERE project=?').get(id);
+    const value = z.object({ revision: z.number().int().nonnegative(), instructions: z.string().max(6000), pins: z.array(z.object({ id: z.string().uuid(), materialId: z.string().uuid(), resourceKey: z.string().regex(/^[a-f0-9]{64}$/), originProjectId: z.string().uuid().optional() }).strict()).max(10) }).strict().parse(row ? JSON.parse(String(row.body)) : { revision: 0, instructions: '', pins: [] });
+    if (new Set(value.pins.map(p => p.id)).size !== value.pins.length || new Set(value.pins.map(p => p.resourceKey)).size !== value.pins.length) throw new Error('Invalid project resource bindings');
+    return { ...value, instructionHash: sha256(value.instructions) };
+  }
+  saveContext(id: string, expected: number, change: { instructions?: string; pins?: ProjectPin[] }) {
+    const p = this.get(id), current = this.context(id);
+    if (p.archived || current.revision !== expected) throw new Error('请重新审阅项目上下文：版本已变化或项目已归档。');
+    if (change.instructions !== undefined && change.instructions.length > 6000 || change.pins && (change.pins.length > 10 || new Set(change.pins.map(p => p.resourceKey)).size !== change.pins.length)) throw new Error('请使用最多6000字符说明、10份不同固定材料。');
+    const { instructionHash, ...body } = current; void instructionHash;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('INSERT INTO project_context VALUES (?,?) ON CONFLICT(project) DO UPDATE SET body=excluded.body').run(id, JSON.stringify({ ...body, ...change, revision: current.revision + 1 }));
+      this.save({ ...p, revision: p.revision + 1, updatedAt: new Date().toISOString() });
+      this.context(id); this.db.exec('COMMIT');
+    } catch (e) { this.db.exec('ROLLBACK'); throw e; }
+    return this.context(id);
   }
   list(): ProjectView[] { return this.db.prepare('SELECT body FROM projects ORDER BY rowid DESC').all().map(r => schema.parse(JSON.parse(String(r.body)))); }
   get(id: string): ProjectView { const r = this.db.prepare('SELECT body FROM projects WHERE id=?').get(id); if (!r) throw new Error('请重新选择项目。'); return schema.parse(JSON.parse(String(r.body))); }

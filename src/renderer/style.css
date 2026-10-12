@@ -387,6 +387,21 @@ h1 { font-size: var(--text-lg); }
 .home .composer-options { flex-wrap: wrap; }
 .home .context-chip svg { flex-shrink: 0; }
 .home-heading>button { flex-shrink: 0; white-space: nowrap; }
+.project-context-editor { position: relative; }
+.project-context-editor textarea { width: 100%; resize: vertical; min-height: 100px; background: var(--color-surface); color: var(--color-text); padding: 8px; border: 1px solid var(--color-border); }
+.resource-browser { font-size: 12px; }
+.resource-search { display: flex; align-items: center; gap: 8px; margin: 8px 0; white-space: nowrap; }
+.resource-search input { min-width: 0; width: 100%; padding: 6px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
+.resource-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--color-border); }
+.resource-row.artifact-card { padding: 8px 0; background: none; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; }
+.resource-open { flex: 1 1 160px; min-width: 0; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.resource-open span { overflow-wrap: anywhere; }
+.resource-open small { color: var(--color-muted); font-size: 11px; }
+.resource-picker { max-height: 25dvh; overflow: auto; border: 1px solid var(--color-border); padding: 8px; margin-bottom: 8px; }
+.resource-picker .project-browser-heading { position: sticky; top: 0; background: var(--color-surface); }
+.composer-dock:has(.resource-picker) { max-height: 55%; overflow: auto; }
+.material-bar>span { margin-left: 8px; }
+.run-project-context { flex: none; font-size: 11px; color: var(--color-muted); padding: 0 16px 4px; }
 @media (max-width: 760px) {
   .sidebar .project-nav { display: none; }
   .project-membership { padding: 4px 12px; }

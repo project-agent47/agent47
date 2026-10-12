@@ -343,6 +343,7 @@ export class Workspace {
       bytes: Buffer.byteLength(loaded.content), capturedAt: new Date().toISOString(), source: 'file' };
   }
   async checkMaterial(material: MaterialSnapshot) {
+    if (material.frozen) { validateMaterialSnapshot(material); return true; }
     const current = material.source === 'artifact'
       ? await this.fromSource({ kind: 'artifact', taskId: material.sourceTaskId!, artifactId: material.sourceArtifactId! })
       : await this.fromFile(material.path!);
@@ -362,6 +363,14 @@ export class Workspace {
       kind: classifyDocument(material.name), status: '已引用版本快照 · 刷新不会自动更新对话引用' });
   }
   async openSource(source: WorkspaceSource) { return this.add(await this.fromSource(source)); }
+  async captureResource(source: WorkspaceSource | { root: string; path: string }): Promise<MaterialSnapshot> {
+    const loaded = 'kind' in source ? await this.fromSource(source) : await this.fromFile(await safeProjectPath(source.root, source.path));
+    if (loaded.content === undefined || loaded.source === 'proposal') throw new Error('请使用已保存的文本资源；提案与不支持的文档不能作为材料。');
+    const content = loaded.content;
+    const result: MaterialSnapshot = { id: randomUUID(), name: loaded.name, content, sha256: loaded.sha256, bytes: Buffer.byteLength(content), capturedAt: new Date().toISOString(), source: loaded.source as 'file' | 'artifact', path: loaded.path,
+      ...('kind' in source && source.kind === 'artifact' ? { sourceTaskId: source.taskId, sourceArtifactId: source.artifactId } : {}) };
+    validateMaterialSnapshot(result); return result;
+  }
   async openWeb(value: string) {
     const url = z.string().url().max(2048).parse(value); webOrigin(url);
     return this.add({ name: new URL(url).hostname.slice(0, 255), kind: 'web', source: 'web', url, sha256: sha256(url), status: '独立临时网页会话 · 不自动入模' });

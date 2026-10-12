@@ -2,8 +2,9 @@ import type { MaterialView } from '../shared/contracts';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { sourceBoundary } from '../shared/file-edits';
-export interface MaterialSnapshot extends MaterialView { content: string; path?: string }
+export interface MaterialSnapshot extends MaterialView { content: string; path?: string; frozen?: true }
 export function validateMaterialSnapshot(m: MaterialSnapshot) {
+  if (m.frozen !== undefined && m.frozen !== true) throw new Error('Invalid frozen material version');
   if (typeof m.content !== 'string' || Buffer.byteLength(m.content) !== m.bytes || m.bytes > 1_000_000 ||
     createHash('sha256').update(m.content).digest('hex') !== m.sha256) throw new Error('请检查本地存储：材料版本校验失败。');
   if (m.selection && (!Number.isInteger(m.selection.start) || !Number.isInteger(m.selection.end) || m.selection.start < 0 || m.selection.end <= m.selection.start || m.selection.end > m.content.length || m.selection.end - m.selection.start > 12000 || !sourceBoundary(m.content, m.selection.start) || !sourceBoundary(m.content, m.selection.end))) throw new Error('请重新选择有效文本范围。');

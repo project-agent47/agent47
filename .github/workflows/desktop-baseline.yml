@@ -38,6 +38,8 @@ jobs:
         if: runner.os != 'Linux'
       - run: npm run test:projects:native
         if: runner.os != 'Linux'
+      - run: npm run test:resources:native
+        if: runner.os != 'Linux'
       - run: npm run test:pause:native
         if: runner.os != 'Linux'
       - run: npm audit --omit=dev
@@ -61,4 +63,5 @@ jobs:
       - run: xvfb-run -a npm run test:selection:native
       - run: xvfb-run -a npm run test:evidence:native
       - run: xvfb-run -a npm run test:projects:native
+      - run: xvfb-run -a npm run test:resources:native
       - run: xvfb-run -a npm run test:pause:native

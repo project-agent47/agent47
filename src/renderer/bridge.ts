@@ -3,6 +3,7 @@ import { answerSummary, parseQuestions, validateAnswers } from '../shared/questi
 import { previewWorkspace } from './workspace-preview';
 import { pageMessage } from '../shared/web-capture';
 import type { PageCapture } from '../shared/contracts';
+import type { ProjectContext, ResourceSource, ResourceView } from '../shared/contracts';
 
 const demoQuestions = parseQuestions({ questions: [
   { id: 'audience', header: '受众', prompt: '这份报告面向谁？', type: 'single', options: [{ id: 'team', label: '研发团队', description: '强调技术与实现' }, { id: 'management', label: '管理层', description: '强调目标与风险' }] },
@@ -50,9 +51,65 @@ const materialContents = new Map<string, string>();
 const previewProjects: ProjectView[] = [], projectRequests = new Map<string, string>(), memberships = new Map<string, string>();
 const projectWorkspaces = new Map<string, WorkspaceState>();
 let currentProject: string | undefined;
+const previewContexts = new Map<string, ProjectContext>();
+const previewContext = (id: string): ProjectContext => {
+  let c = previewContexts.get(id);
+  if (!c) { c = { projectId: id, name: previewProjects.find(p => p.id === id)!.name, revision: 0, instructions: '', instructionHash: '0'.repeat(64), pins: [] }; previewContexts.set(id, c); }
+  return c;
+};
+const previewResource = (source: ResourceSource): { material: import('../shared/contracts').MaterialView; content: string } => {
+  if (source.kind === 'pin') {
+    const p = previewContext(source.projectId).pins.find(p => p.id === source.pinId)!;
+    if (!p || p.material.sha256 !== source.expectedHash) throw new Error('请重新选择资源版本。');
+    return { material: clone(p.material), content: materialContents.get(p.material.id)! };
+  }
+  const a = source.kind === 'artifact' ? samples.find(t => t.id === source.taskId)?.artifacts.find(a => a.id === source.artifactId) : undefined;
+  const content = a?.content ?? '# 日常工作示例\n\n固定材料示例，不调用真实模型或读取真实文件。';
+  const material = { id: crypto.randomUUID(), name: a?.name ?? (source.kind === 'projectFile' || source.kind === 'taskFile' ? source.path.split('/').pop()! : '材料.md'), source: a ? 'artifact' as const : 'file' as const, sha256: a?.sha256 ?? 'a'.repeat(64), bytes: new TextEncoder().encode(content).length, capturedAt: new Date().toISOString(),
+    ...(source.kind === 'artifact' ? { sourceTaskId: source.taskId, sourceArtifactId: source.artifactId } : {}) };
+  materialContents.set(material.id, content); return { material, content };
+};
+const previewTouchContext = (c: ProjectContext, expected: number) => {
+  if (c.revision !== expected) throw new Error('请重新审阅项目上下文：版本已变化。');
+  c.revision++; previewProjects.find(p => p.id === c.projectId)!.revision++; emit();
+};
 samples[1].events.push({ id: 'source-demo', at: now, kind: 'assistant', text: '示例来源：[查看示例证据](agent47-source:sffffffffffffffff)。无法核对的标记会显示为 [未读取引用](agent47-source:s0000000000000000)，不会变成可点击来源。' });
 const previewBridge: AgentBridge = {
   preview: true,
+  projectContext: async id => clone(previewContext(id)),
+  saveProjectInstructions: async input => { const c = previewContext(input.id); if (input.instructions.length > 6000) throw new Error('请缩短项目说明。'); if (c.revision !== input.expectedRevision) throw new Error('请重新审阅上下文。'); c.instructions = input.instructions; c.instructionHash = String(c.revision + 1).padStart(64, '0'); previewTouchContext(c, input.expectedRevision); return clone(c); },
+  listResources: async projectId => {
+    const rows: ResourceView[] = samples.filter(t => !projectId || memberships.get(t.conversationId ?? t.id) === projectId).flatMap(t => t.artifacts.map(a => ({ key: `artifact:${t.id}:${a.id}`, name: a.name, source: { kind: 'artifact' as const, taskId: t.id, artifactId: a.id }, kind: 'artifact' as const, sha256: a.sha256, bytes: a.content.length, taskId: t.id, pins: [] })));
+    for (const c of previewContexts.values()) if (!projectId || c.projectId === projectId) for (const p of c.pins) {
+      const m = p.material, prior = rows.find(r => m.source === 'artifact' && r.taskId === m.sourceTaskId && r.name === m.name && r.sha256 === m.sha256);
+      if (prior) { prior.pins.push({ projectId: c.projectId, pinId: p.id }); prior.source = { kind: 'pin', projectId: c.projectId, pinId: p.id, expectedHash: m.sha256 }; }
+      else rows.push({ key: m.id, name: m.name, kind: m.source === 'artifact' ? 'artifact' : 'material', source: { kind: 'pin', projectId: c.projectId, pinId: p.id, expectedHash: m.sha256 }, sha256: m.sha256, bytes: m.bytes, taskId: m.sourceTaskId, pins: [{ projectId: c.projectId, pinId: p.id }] });
+    }
+    return clone(rows);
+  },
+  openResource: async source => {
+    if (source.kind === 'artifact') return previewBridge.workspaceOpen(source);
+    if (source.kind === 'projectFile') return previewBridge.openProjectFile({ id: source.projectId, path: source.path });
+    const { material, content } = previewResource(source); return previewWorkspace.material(material.name, content);
+  },
+  prepareResource: async source => { const { material } = previewResource(source), ticket = crypto.randomUUID(); preparedMaterials.set(ticket, material); return clone({ ticket, material }); },
+  attachResource: async ({ taskId, source }) => { const t = samples.find(t => t.id === taskId)!, { material } = previewResource(source); t.materials ??= []; if (!t.materials.some(m => m.id === material.id)) t.materials.push(material); emit(); return clone(t); },
+  pinResource: async input => {
+    const c = previewContext(input.projectId); if (c.revision !== input.expectedRevision) throw new Error('请重新审阅上下文。');
+    const material = input.source ? previewResource(input.source).material : preparedMaterials.get(input.ticket!)!;
+    if (!material) throw new Error('请重新选择材料。');
+    if (!c.pins.some(p => p.material.name === material.name && p.material.sha256 === material.sha256)) {
+      if (c.pins.length >= 10) throw new Error('最多10份材料。');
+      c.pins.push({ id: crypto.randomUUID(), material: { ...clone(material), frozen: true } });
+    }
+    if (input.ticket) preparedMaterials.delete(input.ticket); previewTouchContext(c, input.expectedRevision); return clone(c);
+  },
+  updateProjectPin: async input => {
+    const c = previewContext(input.projectId); if (c.revision !== input.expectedRevision) throw new Error('请重新审阅上下文。');
+    if (input.remove) c.pins = c.pins.filter(p => p.id !== input.pinId);
+    else { const p = c.pins.find(p => p.id === input.pinId)!; const old = p.material; p.material = { ...old, id: crypto.randomUUID(), sha256: '9'.repeat(64) }; materialContents.set(p.material.id, (materialContents.get(old.id) ?? '') + '\n示例更新版本'); }
+    previewTouchContext(c, input.expectedRevision); return clone(c);
+  },
   projects: async () => clone({ projects: previewProjects, currentId: currentProject }),
   createProject: async input => {
     const prior = projectRequests.get(input.clientRequestId); if (prior) return clone(previewProjects.find(p => p.id === prior)!);
@@ -141,6 +198,8 @@ const previewBridge: AgentBridge = {
   },
   listTasks: async () => clone(samples.map(t => ({ ...t, projectId: memberships.get(t.conversationId ?? t.id), conversationTitle: t.conversationTitle ?? samples.filter(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id)).at(-1)?.goal.split('\n')[0].slice(0, 60), latestRunId: samples.find(o => (o.conversationId ?? o.id) === (t.conversationId ?? t.id))?.id }))),
   createTask: async (input: CreateInput) => {
+    const context = input.projectId ? previewContext(input.projectId) : undefined;
+    if (input.projectContextRevision !== undefined && input.projectContextRevision !== context?.revision) throw new Error('请重新审阅上下文。');
     const at = new Date().toISOString();
     const task: TaskView = {
       id: crypto.randomUUID(), goal: input.goal, skill: input.skill, root: input.folderGrant ? '~/Projects/preview' : undefined,
@@ -149,7 +208,11 @@ const previewBridge: AgentBridge = {
       events: [{ id: crypto.randomUUID(), at, kind: 'user', text: input.goal }]
     };
     samples.unshift(task); emit();
-    if (input.projectId) { memberships.set(task.id, input.projectId); const p = previewProjects.find(p => p.id === input.projectId)!; task.root = p.rootEnabled ? p.root : undefined; }
+    if (input.projectId) {
+      memberships.set(task.id, input.projectId); const p = previewProjects.find(p => p.id === input.projectId)!; task.root = p.rootEnabled ? p.root : undefined;
+      const c = context!;
+      const { pins, ...manifest } = c; task.projectContext = clone(manifest); task.materials!.push(...pins.filter(p => input.projectPinIds?.includes(p.id)).map(p => ({ ...clone(p.material), frozen: true as const })));
+    }
     if (input.goal.includes('多题演示')) {
       task.status = 'awaiting_input'; task.steps = 1;
       task.question = { id: crypto.randomUUID(), text: '多题交互示例', questions: clone(demoQuestions), revision: 1, digest: '0'.repeat(64), legacy: false };
@@ -208,6 +271,9 @@ const previewBridge: AgentBridge = {
       status: 'completed', approval: undefined, artifacts: [], steps: 1, usage: [], events: [...parent.events,
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'user', text: input.text },
         { id: crypto.randomUUID(), at: new Date().toISOString(), kind: 'assistant', text: '## 继续讨论\n\n这是**多轮交互示例**，没有调用模型。\n\n| 能力 | 状态 |\n|---|---|\n| Markdown | 示例渲染 |\n| 工具 | 不执行 |' }] };
+    const projectId = memberships.get(parent.conversationId ?? parent.id);
+    if (projectId) { const { pins, ...manifest } = previewContext(projectId); void pins; task.projectContext = clone(manifest); }
+    else task.projectContext = undefined;
     samples.unshift(task); emit(); return clone(task);
   },
   manageQueue: async input => {
