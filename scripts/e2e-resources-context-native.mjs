@@ -20,8 +20,10 @@ async function launch() {
   await page.locator('.sidebar').waitFor(); await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 1000));
 }
 async function done(id) {
-  await expect.poll(async () => (await tasks()).find(t => t.id === id)?.status, { timeout: 180000 }).toBe('completed');
-  return (await tasks()).find(t => t.id === id);
+  await expect.poll(async () => ['completed', 'failed', 'cancelled', 'awaiting_approval', 'paused'].includes((await tasks()).find(t => t.id === id)?.status), { timeout: 180000 }).toBe(true);
+  const task = (await tasks()).find(t => t.id === id);
+  if (task.status !== 'completed') throw new Error(`Run ended ${task.status}: ${task.events.filter(e => e.kind === 'error').map(e => e.text).join('; ')}`);
+  return task;
 }
 async function record(id) {
   return app.evaluate(({ app }, id) => {
